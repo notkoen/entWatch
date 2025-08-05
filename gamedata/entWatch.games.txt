@@ -1,0 +1,33 @@
+"Games"
+{
+	"cstrike"
+	{
+		/*
+			Build Label:           6630498   # Uniquely identifies each build
+			Network PatchVersion:  6630498   # Determines client and server compatibility
+			Protocol version:           24   # High level network protocol version
+			Server version:        6630498
+			Server AppID:           232330
+		*/
+		"Offsets"
+		{
+			"CBaseCombatWeapon::OnPickedUp"		// Called after pickup
+			{
+				"windows"   "300"
+				"linux"     "301"
+			}
+
+			"CBaseCombatWeapon::GetSlot"		// Gets the slot of the weapon
+			{
+				"windows"   "320"
+				"linux"     "321"
+			}
+
+			"CBasePlayer::BumpWeapon"			// Checks if pickup is possible
+			{
+				"windows"   "397"
+				"linux"     "398"
+			}
+		}
+	}
+}

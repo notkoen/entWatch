@@ -1,0 +1,23 @@
+"Phrases"
+{
+	"Item Drop"
+	{
+		"en"	"has dropped"
+	}
+	"Item Death"
+	{
+		"en"	"died with"
+	}
+	"Item Pickup"
+	{
+		"en"	"picked up"
+	}
+	"Item Disconnect"
+	{
+		"en"	"disconnected with"
+	}
+	"Item Activate"
+	{
+		"en"	"used"
+	}
+}
