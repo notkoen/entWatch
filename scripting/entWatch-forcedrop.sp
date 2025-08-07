@@ -81,8 +81,6 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 		(iInteractionType != EW_WEAPON_INTERACTION_DISCONNECT))
 		return;
 
-	if (SDKCall(SDKCall_GetSlot, hItem.iWeapon) == 3)
-		AcceptEntityInput(hItem.iWeapon, "Kill");
-	else
+	if (0 <= SDKCall(SDKCall_GetSlot, hItem.iWeapon) < 2)
 		SDKHooks_DropWeapon(iClient, hItem.iWeapon, NULL_VECTOR, NULL_VECTOR, false); // Using this causes ammo to disapear on the weapon
 }
