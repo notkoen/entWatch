@@ -68,6 +68,8 @@ stock void LoadGameConfig()
 		SetFailState("Failed to setup SDKCall \"SDKCall_GetSlot\"!");
 		return;
 	}
+
+	delete hGameConf;
 }
 
 //----------------------------------------------------------------------------------------------------
