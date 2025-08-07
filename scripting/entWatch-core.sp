@@ -998,14 +998,9 @@ stock Action ProcessButtonPress(int iClient, CItem hItem, CItemButton hItemButto
 				}
 				case EW_BUTTON_MODE_MAXUSES:
 				{
-					if (hItemButton.iCurrentUses < hItemButton.hConfigButton.iMaxUses)
+					if (hItemButton.flReadyTime < g_flGameFrameTime && hItemButton.iCurrentUses < hItemButton.hConfigButton.iMaxUses)
 					{
-						if (hItemButton.flReadyTime < g_flGameFrameTime)
-						{
-							hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
-						}
-						else return Plugin_Handled;
-
+						hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
 						hItemButton.iCurrentUses++;
 					}
 					else return Plugin_Handled;
