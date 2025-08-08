@@ -30,6 +30,8 @@
 #define EW_BUTTON_TYPE_NONE                 0   /**< Button has no type */
 #define EW_BUTTON_TYPE_USE                  1   /**< Button is +use activated */
 #define EW_BUTTON_TYPE_OUTPUT               2   /**< Button is activated by outputs */
+#define EW_BUTTON_TYPE_COUNTERUP            3   /**< Item usage based on counter with OnHitMax output */
+#define EW_BUTTON_TYPE_COUNTERDOWN          4   /**< Item usage based on counter with OnHitMin */
 
 /**
  *
@@ -38,6 +40,7 @@
 #define EW_BUTTON_MODE_COOLDOWN             1   /**< Standard cooldown */
 #define EW_BUTTON_MODE_MAXUSES              2   /**< Standard max uses with or without cooldown */
 #define EW_BUTTON_MODE_COOLDOWN_CHARGES     3   /**< Cooldown after multiple uses */
+#define EW_BUTTON_MODE_COUNTERVALUE         4   /**< Counter value */
 
 /**
  *

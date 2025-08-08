@@ -23,6 +23,9 @@ bool g_bIntermission;
 /* FLOATS */
 float g_flGameFrameTime;
 
+/* INTS */
+int g_iOutValueOffset = -1;
+
 /* ARRAYS */
 ArrayList g_hArray_Items;
 ArrayList g_hArray_Configs;
@@ -339,16 +342,20 @@ stock void CleanupItems()
 				{
 					switch (hItemButton.hConfigButton.iType)
 					{
-						case (EW_BUTTON_TYPE_USE):
+						case EW_BUTTON_TYPE_USE:
 						{
 							SDKUnhook(hItemButton.iButton, SDKHook_Use, OnButtonPress);
 						}
-						case (EW_BUTTON_TYPE_OUTPUT):
+						case EW_BUTTON_TYPE_OUTPUT:
 						{
 							char sButtonOutput[32];
 							hItemButton.hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
 
 							UnhookSingleEntityOutput(hItemButton.iButton, sButtonOutput, OnButtonOutput);
+						}
+						case EW_BUTTON_TYPE_COUNTERUP, EW_BUTTON_TYPE_COUNTERDOWN:
+						{
+							UnhookSingleEntityOutput(hItemButton.iButton, "OutValue", OnCounterOutput);
 						}
 					}
 				}
@@ -591,22 +598,50 @@ stock bool RegisterItemButton(CConfigButton hConfigButton, CItem hItem, int iBut
 	{
 		switch (hConfigButton.iType)
 		{
-			case (EW_BUTTON_TYPE_USE):
+			case EW_BUTTON_TYPE_USE:
 			{
 				SDKHook(iButton, SDKHook_Use, OnButtonPress);
 			}
-			case (EW_BUTTON_TYPE_OUTPUT):
+			case EW_BUTTON_TYPE_OUTPUT:
 			{
 				char sButtonOutput[32];
 				hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
 
 				HookSingleEntityOutput(iButton, sButtonOutput, OnButtonOutput);
 			}
+			case EW_BUTTON_TYPE_COUNTERUP, EW_BUTTON_TYPE_COUNTERDOWN:
+			{
+				HookSingleEntityOutput(iButton, "OutValue", OnCounterOutput);
+			}
 		}
 
 		CItemButton hItemButton = new CItemButton(hConfigButton, hItem);
 		hItemButton.iButton = iButton;
 		hItemButton.iState  = EW_ENTITY_STATE_SPAWNED;
+
+		if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN || hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+		{
+			int iMax = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
+
+			if (hConfigButton.iMode == EW_BUTTON_MODE_COUNTERVALUE)
+			{
+				hConfigButton.iMaxUses = iMax;
+
+				if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
+					hItemButton.iCurrentUses = GetCounterValue(iButton) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
+				else if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+					hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - GetCounterValue(iButton);
+			}
+			else
+			{
+				if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
+					hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - GetCounterValue(iButton);
+				else if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+					hItemButton.iCurrentUses = GetCounterValue(iButton) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
+
+				hConfigButton.iMaxUses = iMax;
+			}
+		}
 
 		bool bShifted;
 
@@ -972,6 +1007,33 @@ stock Action OnButtonOutput(const char[] sOutput, int iButton, int iClient, floa
 }
 
 //----------------------------------------------------------------------------------------------------
+// Purpose: Separate output hook for math_counter hook because iClient can be invalid
+//----------------------------------------------------------------------------------------------------
+stock Action OnCounterOutput(const char[] sOutput, int iButton, int iClient, float flDelay)
+{
+	if (!IsValidEntity(iButton) || !g_hArray_Items.Length)
+		return Plugin_Handled;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+	{
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		if (hItem.iClient != INVALID_ENT_REFERENCE)
+		{
+			for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+			{
+				CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+
+				if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iButton)
+					return ProcessCounterValue(iClient, hItem, hItemButton);
+			}
+		}
+	}
+
+	return Plugin_Handled;
+}
+
+//----------------------------------------------------------------------------------------------------
 // Purpose:
 //----------------------------------------------------------------------------------------------------
 stock Action ProcessButtonPress(int iClient, CItem hItem, CItemButton hItemButton)
@@ -1033,6 +1095,109 @@ stock Action ProcessButtonPress(int iClient, CItem hItem, CItemButton hItemButto
 		else return Plugin_Handled;
 	}
 	else return Plugin_Handled;
+}
+
+//----------------------------------------------------------------------------------------------------
+// Purpose:
+//----------------------------------------------------------------------------------------------------
+stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButton)
+{
+	if (hItem.flReadyTime > g_flGameFrameTime)
+		return Plugin_Handled;
+
+	bool bCounterValueType = hItemButton.hConfigButton.iMode == EW_BUTTON_MODE_COUNTERVALUE;
+	if (!bCounterValueType)
+	{
+		bool bResult = true;
+		Call_StartForward(g_hFwd_OnClientItemButtonCanInteract);
+		Call_PushCell(iClient);
+		Call_PushCell(hItemButton);
+		Call_Finish(bResult);
+
+		if (!bResult)
+			return Plugin_Handled;
+	}
+
+	int iNewCurrentUses = 0;
+
+	switch (hItemButton.hConfigButton.iMode)
+	{
+		case EW_BUTTON_MODE_COOLDOWN:
+		{
+			if (hItemButton.flReadyTime < g_flGameFrameTime)
+			{
+				hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
+			}
+			else return Plugin_Handled;
+		}
+		case EW_BUTTON_MODE_MAXUSES:
+		{
+			int iMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
+			int iMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
+			int iValue = GetCounterValue(hItemButton.iButton);
+			hItemButton.hConfigButton.iMaxUses = iMax - iMin;
+
+			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+				iNewCurrentUses = iValue - iMin;
+			else if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
+				iNewCurrentUses = iMax - iValue;
+
+			if (iNewCurrentUses <= hItemButton.iCurrentUses)
+			{
+				hItemButton.iCurrentUses = iNewCurrentUses;
+				return Plugin_Handled;
+			}
+
+			hItemButton.iCurrentUses = iNewCurrentUses;
+			hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
+		}
+		case EW_BUTTON_MODE_COOLDOWN_CHARGES:
+		{
+			int iMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
+			int iMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
+			int iValue = GetCounterValue(hItemButton.iButton);
+			int iMaxUses = iMax - iMin;
+
+			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+				iNewCurrentUses = iValue - iMin;
+			else if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
+				iNewCurrentUses = iMax - iValue;
+
+			if (iNewCurrentUses <= hItemButton.iCurrentUses)
+			{
+				hItemButton.iCurrentUses = iNewCurrentUses;
+				return Plugin_Handled;
+			}
+
+			hItemButton.iCurrentUses = iNewCurrentUses;
+
+			if (hItemButton.iCurrentUses >= iMaxUses)
+				hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
+		}
+		case EW_BUTTON_MODE_COUNTERVALUE:
+		{
+			int iMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
+			int iMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
+			hItemButton.hConfigButton.iMaxUses = iMax - iMin;
+
+			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
+				hItemButton.iCurrentUses = GetCounterValue(hItemButton.iButton) - iMin;
+			else if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+				hItemButton.iCurrentUses = iMax - GetCounterValue(hItemButton.iButton);
+		}
+	}
+
+	hItem.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flItemCooldown;
+
+	if (!bCounterValueType)
+	{
+		Call_StartForward(g_hFwd_OnClientItemButtonInteract);
+		Call_PushCell(iClient);
+		Call_PushCell(hItemButton);
+		Call_Finish();
+	}
+
+	return Plugin_Continue;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -1121,6 +1286,17 @@ stock Action OnWeaponTouch(int iClient, int iWeapon)
 stock bool IsValidClient(int iClient)
 {
 	return ((1 <= iClient <= MaxClients) && IsClientConnected(iClient));
+}
+
+//----------------------------------------------------------------------------------------------------
+// Purpose:
+//----------------------------------------------------------------------------------------------------
+stock int GetCounterValue(int counter)
+{
+	if (g_iOutValueOffset == -1)
+		g_iOutValueOffset = FindDataMapInfo(counter, "m_OutValue");
+
+	return RoundFloat(GetEntDataFloat(counter, g_iOutValueOffset));
 }
 
 //----------------------------------------------------------------------------------------------------

@@ -117,14 +117,14 @@ stock bool FormatButtonCooldown(char[] sBuffer, const int iMaxLength, CItemButto
 				Format(sBuffer, iMaxLength, "%d", RoundToNearest(hItemButton.flReadyTime - GetGameTime()));
 				return true;
 			}
-			else if (hItemButton.iCurrentUses < hItemButton.hConfigButton.iMaxUses)
+			else if (hItemButton.iCurrentUses >= hItemButton.hConfigButton.iMaxUses)
 			{
-				Format(sBuffer, iMaxLength, "%d/%d", hItemButton.iCurrentUses, hItemButton.hConfigButton.iMaxUses);
+				Format(sBuffer, iMaxLength, "E");
 				return true;
 			}
 			else
 			{
-				Format(sBuffer, iMaxLength, "D");
+				Format(sBuffer, iMaxLength, "%d/%d", hItemButton.iCurrentUses, hItemButton.hConfigButton.iMaxUses);
 				return true;
 			}
 		}
@@ -133,6 +133,19 @@ stock bool FormatButtonCooldown(char[] sBuffer, const int iMaxLength, CItemButto
 			if (hItemButton.flReadyTime > GetGameTime())
 			{
 				Format(sBuffer, iMaxLength, "%d", RoundToNearest(hItemButton.flReadyTime - GetGameTime()));
+				return true;
+			}
+			else
+			{
+				Format(sBuffer, iMaxLength, "%d/%d", hItemButton.iCurrentUses, hItemButton.hConfigButton.iMaxUses);
+				return true;
+			}
+		}
+		case EW_BUTTON_MODE_COUNTERVALUE:
+		{
+			if (hItemButton.iCurrentUses <= 0)
+			{
+				Format(sBuffer, iMaxLength, "E");
 				return true;
 			}
 			else
