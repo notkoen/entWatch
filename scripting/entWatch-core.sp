@@ -222,10 +222,13 @@ stock bool LoadConfig(bool bLoopEntities = false)
 					{
 						CConfigButton hConfigButton = new CConfigButton(hConfig);
 
-						char sOutput[32];
+
+						char sOutput[32], sButtonName[32];
 						hConfigFile.GetString("output", sOutput, sizeof(sOutput));
+						hConfigFile.GetString("name", sButtonName, sizeof(sButtonName));
 
 						hConfigButton.SetOutput(sOutput);
+						hConfigButton.SetName(sButtonName);
 
 						hConfigButton.iConfigID = iConfigButtonID++;
 						hConfigButton.iHammerID = hConfigFile.GetNum("hammerid");

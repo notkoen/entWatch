@@ -140,15 +140,19 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 	char sClientAuth[32];
 	GetClientAuthId(iClient, AuthId_Steam2, sClientAuth, sizeof(sClientAuth));
 
-	char sItemName[32];
+	char sItemName[32], sButtonName[32];
 	hItemButton.hItem.hConfig.GetName(sItemName, sizeof(sItemName));
+	hItemButton.hConfigButton.GetName(sButtonName, sizeof(sButtonName));
 
 	if (IsSource2009())
 	{
 		char sItemColor[8];
 		hItemButton.hItem.hConfig.GetColor(sItemColor, sizeof(sItemColor));
 
-		PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName);
+		if (strlen(sButtonName) != 0)
+			PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s (%s)", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName, sButtonName);
+		else
+			PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName);
 	}
 	else
 	{
@@ -164,7 +168,10 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 		}
 
 		// CSGO: Requires a character before colors will work, so add a space.
-		PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
+		if (strlen(sButtonName) != 0)
+			PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s (%s)", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName, sButtonName);
+		else
+			PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
 	}
 }
 
