@@ -148,7 +148,13 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 		char sItemColor[8];
 		hItemButton.hItem.hConfig.GetColor(sItemColor, sizeof(sItemColor));
 
-		PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName);
+		char sButtonName[32];
+		hItemButton.hConfigButton.GetButtonName(sButtonName, sizeof(sButtonName));
+
+		if (strlen(sButtonName) != 0)
+			PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s (%s)", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName, sButtonName);
+		else
+			PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName);
 	}
 	else
 	{
