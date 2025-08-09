@@ -112,14 +112,14 @@ stock bool FormatButtonCooldown(char[] sBuffer, const int iMaxLength, CItemButto
 		}
 		case EW_BUTTON_MODE_MAXUSES:
 		{
-			if (hItemButton.flReadyTime > GetGameTime())
-			{
-				Format(sBuffer, iMaxLength, "%d", RoundToNearest(hItemButton.flReadyTime - GetGameTime()));
-				return true;
-			}
-			else if (hItemButton.iCurrentUses >= hItemButton.hConfigButton.iMaxUses)
+			if (hItemButton.iCurrentUses >= hItemButton.hConfigButton.iMaxUses)
 			{
 				Format(sBuffer, iMaxLength, "E");
+				return true;
+			}
+			else if (hItemButton.flReadyTime > GetGameTime())
+			{
+				Format(sBuffer, iMaxLength, "%d", RoundToNearest(hItemButton.flReadyTime - GetGameTime()));
 				return true;
 			}
 			else
