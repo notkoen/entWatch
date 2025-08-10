@@ -64,7 +64,6 @@ stock void LoadGameConfig()
 	if ((hGameConf = new GameData("funcommands.games")) == null)
 	{
 		SetFailState("Couldn't load \"funcommands.games\" game config!");
-		delete hGameConf;
 		return;
 	}
 
