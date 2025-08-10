@@ -59,6 +59,7 @@ stock void LoadGameConfig()
 	if ((hGameConf = new GameData("funcommands.games")) == null)
 	{
 		SetFailState("Couldn't load \"funcommands.games\" game config!");
+		delete hGameConf;
 		return;
 	}
 
@@ -88,6 +89,12 @@ public Action Command_PrintItems(int iClient, int iArgs)
 	}
 
 	ArrayList hItems = EW_GetItemsArray();
+
+	if (!hItems.Length)
+	{
+		ReplyToCommand(iClient, "\x04[entWatch] \x01Error: Item array returned empty!");
+		return Plugin_Handled;
+	}
 
 	for (int iItemID; iItemID < hItems.Length; iItemID++)
 	{
@@ -170,6 +177,12 @@ public Action Command_PrintConfigs(int iClient, int iArgs)
 	}
 
 	ArrayList hConfigs = EW_GetConfigsArray();
+
+	if (!hConfigs.Length)
+	{
+		ReplyToCommand(iClient, "\x04[entWatch] \x01Error: Item array returned empty!");
+		return Plugin_Handled;
+	}
 
 	for (int iConfigID; iConfigID < hConfigs.Length; iConfigID++)
 	{
@@ -256,38 +269,44 @@ public Action Command_TraceItems(int iClient, int iArgs)
 
 	ArrayList hItems = EW_GetItemsArray();
 
+	if (!hItems.Length)
+	{
+		ReplyToCommand(iClient, "\x04[entWatch] \x01Error: Item array returned empty!");
+		return Plugin_Handled;
+	}
+
 	for (int iItemID; iItemID < hItems.Length; iItemID++)
 	{
 		CItem hItem = hItems.Get(iItemID);
 
-		if (IsValidEntity(hItem.iWeapon))
+		if (!IsValidEntity(hItem.iWeapon))
+			continue;
+
+		if (hItem.iState == EW_ENTITY_STATE_SPAWNED || hItem.iState == EW_ENTITY_STATE_DROPPED)
 		{
-			if (hItem.iState == EW_ENTITY_STATE_SPAWNED || hItem.iState == EW_ENTITY_STATE_DROPPED)
-			{
-				float flOriginStart[3];
-				GetClientAbsOrigin(iClient, flOriginStart);
+			float flOriginStart[3];
+			GetClientAbsOrigin(iClient, flOriginStart);
 
-				float flOriginEnd[3];
-				GetEntPropVector(hItem.iWeapon, Prop_Data, "m_vecOrigin", flOriginEnd);
+			float flOriginEnd[3];
+			GetEntPropVector(hItem.iWeapon, Prop_Data, "m_vecOrigin", flOriginEnd);
 
-				flOriginStart[2] += 2;
-				flOriginEnd[2] += 2;
+			flOriginStart[2] += 2;
+			flOriginEnd[2] += 2;
 
-				char sColor[8];
-				hItem.hConfig.GetColor(sColor, sizeof(sColor));
+			char sColor[8];
+			hItem.hConfig.GetColor(sColor, sizeof(sColor));
 
-				int iColorDecimal;
-				StringToIntEx(sColor, iColorDecimal, 16);
+			int iColorDecimal;
+			StringToIntEx(sColor, iColorDecimal, 16);
 
-				int iColor[4];
-				iColor[0] = iColorDecimal >> 16 & 0xFF;
-				iColor[1] = iColorDecimal >> 8  & 0xFF;
-				iColor[2] = iColorDecimal >> 0  & 0xFF;
-				iColor[3] = 0xFF;
+			int iColor[4];
+			iColor[0] = iColorDecimal >> 16 & 0xFF;
+			iColor[1] = iColorDecimal >> 8  & 0xFF;
+			iColor[2] = iColorDecimal >> 0  & 0xFF;
+			iColor[3] = 0xFF;
 
-				TE_SetupBeamPoints(flOriginStart, flOriginEnd, g_iBeamSprite, g_iHaloSprite, 0, 10, 5.0, 2.0, 2.0, 0, 0.5, iColor, 10);
-				TE_SendToClient(iClient);
-			}
+			TE_SetupBeamPoints(flOriginStart, flOriginEnd, g_iBeamSprite, g_iHaloSprite, 0, 10, 5.0, 2.0, 2.0, 0, 0.5, iColor, 10);
+			TE_SendToClient(iClient);
 		}
 	}
 
