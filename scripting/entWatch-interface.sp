@@ -74,20 +74,9 @@ public Action Command_ToggleHUD(int iClient, int iArgs)
 {
 	g_bInterfaceHidden[iClient] = !g_bInterfaceHidden[iClient];
 
-	if (g_bInterfaceHidden[iClient])
-	{
-		g_hCookie_InterfaceHidden.SetBool(iClient, true);
-
-		ReplyToCommand(iClient, "\x04[entWatch] \x01You will now no longer see the HUD.");
-		return Plugin_Handled;
-	}
-	else
-	{
-		g_hCookie_InterfaceHidden.SetBool(iClient, false);
-
-		ReplyToCommand(iClient, "\x04[entWatch] \x01You will now see the HUD again.");
-		return Plugin_Handled;
-	}
+	g_hCookie_InterfaceHidden.SetBool(iClient, g_bInterfaceHidden[iClient]);
+	ReplyToCommand(iClient, "\x04[entWatch] \x01You will now %ssee the HUD.", g_bInterfaceHidden[iClient] ? "no longer " : "");
+	return Plugin_Handled;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -170,25 +159,24 @@ stock bool FormatItemCooldowns(char[] sBuffer, const int iMaxLength, CItem hItem
 	{
 		CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
 
-		if (hItemButton.hConfigButton.bShowCooldown)
+		if (!hItemButton.hConfigButton.bShowCooldown)
+			continue;
+
+		char sCooldown[8];
+
+		if (!FormatButtonCooldown(sCooldown, sizeof(sCooldown), hItemButton))
+			continue;
+
+		if (!bHasCooldown)
 		{
-			char sCooldown[8];
-			bool bCooldown = FormatButtonCooldown(sCooldown, sizeof(sCooldown), hItemButton);
+			bHasCooldown = true;
 
-			if (bCooldown)
-			{
-				if (!bHasCooldown)
-				{
-					bHasCooldown = true;
-
-					StrCat(sBuffer, iMaxLength, sCooldown);
-				}
-				else
-				{
-					StrCat(sBuffer, iMaxLength, "|");
-					StrCat(sBuffer, iMaxLength, sCooldown);
-				}
-			}
+			StrCat(sBuffer, iMaxLength, sCooldown);
+		}
+		else
+		{
+			StrCat(sBuffer, iMaxLength, "|");
+			StrCat(sBuffer, iMaxLength, sCooldown);
 		}
 	}
 
@@ -205,52 +193,54 @@ stock Action OnDisplayHUD(Handle hTimer)
 
 	ArrayList hItems = EW_GetItemsArray();
 
+	if (!hItems.Length)
+		return Plugin_Continue;
+
 	for (int iItemID; iItemID < hItems.Length; iItemID++)
 	{
 		CItem hItem = hItems.Get(iItemID);
 
-		if (hItem.hConfig.bShowInterface && hItem.iClient != INVALID_ENT_REFERENCE)
+		if (!hItem.hConfig.bShowInterface || hItem.iClient == INVALID_ENT_REFERENCE)
+			continue;
+
+		char sShort[16];
+		hItem.hConfig.GetShort(sShort, sizeof(sShort));
+
+		char sCooldowns[16];
+		bool bCooldowns = FormatItemCooldowns(sCooldowns, sizeof(sCooldowns), hItem);
+
+		char sLine[64];
+
+		if (bCooldowns)
+			Format(sLine, sizeof(sLine), "%s [%s]: %N", sShort, sCooldowns, hItem.iClient);
+		else
+			Format(sLine, sizeof(sLine), "%s [N/A]: %N", sShort, hItem.iClient);
+
+		switch (GetClientTeam(hItem.iClient))
 		{
-			char sShort[16];
-			hItem.hConfig.GetShort(sShort, sizeof(sShort));
-
-			char sCooldowns[16];
-			bool bCooldowns = FormatItemCooldowns(sCooldowns, sizeof(sCooldowns), hItem);
-
-			char sLine[64];
-
-			if (bCooldowns)
+			case 2:
 			{
-				Format(sLine, sizeof(sLine), "%s [%s]: %N", sShort, sCooldowns, hItem.iClient);
+				if (strlen(sHUDPages[1][iHUDPages[1]]) + strlen(sLine) + 2 >= sizeof(sHUDPages[][]))
+					iHUDPages[1]++;
+
+				StrCat(sHUDPages[1][iHUDPages[1]], sizeof(sHUDPages[][]), sLine);
+				StrCat(sHUDPages[1][iHUDPages[1]], sizeof(sHUDPages[][]), "\n");
 			}
-			else
+			case 3:
 			{
-				Format(sLine, sizeof(sLine), "%s [N/A]: %N", sShort, hItem.iClient);
+				if (strlen(sHUDPages[2][iHUDPages[2]]) + strlen(sLine) + 2 >= sizeof(sHUDPages[][]))
+					iHUDPages[2]++;
+
+				StrCat(sHUDPages[2][iHUDPages[2]], sizeof(sHUDPages[][]), sLine);
+				StrCat(sHUDPages[2][iHUDPages[2]], sizeof(sHUDPages[][]), "\n");
 			}
-
-			switch (GetClientTeam(hItem.iClient))
-			{
-				case (2):
-				{
-					if (strlen(sHUDPages[1][iHUDPages[1]]) + strlen(sLine) + 2 >= sizeof(sHUDPages[][])) iHUDPages[1]++;
-
-					StrCat(sHUDPages[1][iHUDPages[1]], sizeof(sHUDPages[][]), sLine);
-					StrCat(sHUDPages[1][iHUDPages[1]], sizeof(sHUDPages[][]), "\n");
-				}
-				case (3):
-				{
-					if (strlen(sHUDPages[2][iHUDPages[2]]) + strlen(sLine) + 2 >= sizeof(sHUDPages[][])) iHUDPages[2]++;
-
-					StrCat(sHUDPages[2][iHUDPages[2]], sizeof(sHUDPages[][]), sLine);
-					StrCat(sHUDPages[2][iHUDPages[2]], sizeof(sHUDPages[][]), "\n");
-				}
-			}
-
-			if (strlen(sHUDPages[0][iHUDPages[0]]) + strlen(sLine) + 2 >= sizeof(sHUDPages[][])) iHUDPages[0]++;
-
-			StrCat(sHUDPages[0][iHUDPages[0]], sizeof(sHUDPages[][]), sLine);
-			StrCat(sHUDPages[0][iHUDPages[0]], sizeof(sHUDPages[][]), "\n");
 		}
+
+		if (strlen(sHUDPages[0][iHUDPages[0]]) + strlen(sLine) + 2 >= sizeof(sHUDPages[][]))
+			iHUDPages[0]++;
+
+		StrCat(sHUDPages[0][iHUDPages[0]], sizeof(sHUDPages[][]), sLine);
+		StrCat(sHUDPages[0][iHUDPages[0]], sizeof(sHUDPages[][]), "\n");
 	}
 
 	static int iPageInterval;
@@ -307,9 +297,7 @@ stock Action OnDisplayHUD(Handle hTimer)
 			Handle hMessage = StartMessageOne("KeyHintText", iClient);
 
 			if (GetFeatureStatus(FeatureType_Native, "GetUserMessageType") == FeatureStatus_Available && GetUserMessageType() == UM_Protobuf)
-			{
 				PbAddString(hMessage, "hints", sHUDPages[iPagePanel][iPageCurrent[iPagePanel]]);
-			}
 			else
 			{
 				// Byte: message amount.
@@ -329,19 +317,20 @@ public void PanelHandler_HUD(Menu menu, MenuAction action, int param1, int param
 {
 	switch (action)
 	{
-		case (MenuAction_Select):
+		case MenuAction_Select:
 		{
 			// param1 = client
 			// param2 = key pressed
 
 			PrintToChatAll("MenuAction_Select: %N -> %d", param1, param2);
 		}
-		case (MenuAction_Cancel):
+		case MenuAction_Cancel:
 		{
 			switch (param2)
 			{
-				case (MenuCancel_Interrupted):
-				{}
+				case MenuCancel_Interrupted:
+				{
+				}
 				default:
 				{
 					PrintToChatAll("MenuAction_Cancel: %N -> %d", param1, param2);
