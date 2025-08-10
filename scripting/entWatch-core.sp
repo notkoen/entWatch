@@ -23,9 +23,6 @@ bool g_bIntermission;
 /* FLOATS */
 float g_flGameFrameTime;
 
-/* INTS */
-int g_iOutValueOffset = -1;
-
 /* ARRAYS */
 ArrayList g_hArray_Items;
 ArrayList g_hArray_Configs;
@@ -299,31 +296,31 @@ stock bool LoadConfig(bool bLoopEntities = false)
 //----------------------------------------------------------------------------------------------------
 stock void CleanupConfigs()
 {
-	if (g_hArray_Configs.Length)
+	if (!g_hArray_Configs.Length)
+		return;
+
+	for (int iConfigID; iConfigID < g_hArray_Configs.Length; iConfigID++)
 	{
-		for (int iConfigID; iConfigID < g_hArray_Configs.Length; iConfigID++)
+		CConfig hConfig = g_hArray_Configs.Get(iConfigID);
+
+		for (int iConfigButtonID; iConfigButtonID < hConfig.hButtons.Length; iConfigButtonID++)
 		{
-			CConfig hConfig = g_hArray_Configs.Get(iConfigID);
+			CConfigButton hConfigButton = hConfig.hButtons.Get(iConfigButtonID);
 
-			for (int iConfigButtonID; iConfigButtonID < hConfig.hButtons.Length; iConfigButtonID++)
-			{
-				CConfigButton hConfigButton = hConfig.hButtons.Get(iConfigButtonID);
-
-				delete hConfigButton;
-			}
-
-			for (int iConfigTriggerID; iConfigTriggerID < hConfig.hTriggers.Length; iConfigTriggerID++)
-			{
-				CConfigTrigger hConfigTrigger = hConfig.hTriggers.Get(iConfigTriggerID);
-
-				delete hConfigTrigger;
-			}
-
-			delete hConfig;
+			delete hConfigButton;
 		}
 
-		g_hArray_Configs.Clear();
+		for (int iConfigTriggerID; iConfigTriggerID < hConfig.hTriggers.Length; iConfigTriggerID++)
+		{
+			CConfigTrigger hConfigTrigger = hConfig.hTriggers.Get(iConfigTriggerID);
+
+			delete hConfigTrigger;
+		}
+
+		delete hConfig;
 	}
+
+	g_hArray_Configs.Clear();
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -331,66 +328,72 @@ stock void CleanupConfigs()
 //----------------------------------------------------------------------------------------------------
 stock void CleanupItems()
 {
-	if (g_hArray_Items.Length)
+	if (!g_hArray_Configs.Length)
+		return;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
 
-			for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+			if (!IsValidEntity(hItemButton.iButton))
 			{
-				CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
-
-				if (IsValidEntity(hItemButton.iButton))
-				{
-					switch (hItemButton.hConfigButton.iType)
-					{
-						case EW_BUTTON_TYPE_USE:
-						{
-							SDKUnhook(hItemButton.iButton, SDKHook_Use, OnButtonPress);
-						}
-						case EW_BUTTON_TYPE_OUTPUT:
-						{
-							char sButtonOutput[32];
-							hItemButton.hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
-
-							UnhookSingleEntityOutput(hItemButton.iButton, sButtonOutput, OnButtonOutput);
-						}
-						case EW_BUTTON_TYPE_COUNTERUP, EW_BUTTON_TYPE_COUNTERDOWN:
-						{
-							UnhookSingleEntityOutput(hItemButton.iButton, "OutValue", OnCounterOutput);
-						}
-					}
-				}
-
 				delete hItemButton;
+				continue;
 			}
 
-			for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
+			switch (hItemButton.hConfigButton.iType)
 			{
-				CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
-
-				if (IsValidEntity(hItemTrigger.iTrigger))
+				case EW_BUTTON_TYPE_USE:
 				{
-					switch (hItemTrigger.hConfigTrigger.iType)
-					{
-						case (EW_TRIGGER_TYPE_STRIP):
-						{
-							SDKUnhook(hItemTrigger.iTrigger, SDKHook_StartTouch, OnTriggerTouch);
-							SDKUnhook(hItemTrigger.iTrigger, SDKHook_EndTouch, OnTriggerTouch);
-							SDKUnhook(hItemTrigger.iTrigger, SDKHook_Touch, OnTriggerTouch);
-						}
-					}
+					SDKUnhook(hItemButton.iButton, SDKHook_Use, OnButtonPress);
 				}
+				case EW_BUTTON_TYPE_OUTPUT:
+				{
+					char sButtonOutput[32];
+					hItemButton.hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
 
-				delete hItemTrigger;
+					UnhookSingleEntityOutput(hItemButton.iButton, sButtonOutput, OnButtonOutput);
+				}
+				case EW_BUTTON_TYPE_COUNTERUP, EW_BUTTON_TYPE_COUNTERDOWN:
+				{
+					UnhookSingleEntityOutput(hItemButton.iButton, "OutValue", OnCounterOutput);
+				}
 			}
 
-			delete hItem;
+			delete hItemButton;
 		}
 
-		g_hArray_Items.Clear();
+		for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
+		{
+			CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
+
+			if (!IsValidEntity(hItemTrigger.iTrigger))
+			{
+				delete hItemTrigger;
+				continue;
+			}
+
+			switch (hItemTrigger.hConfigTrigger.iType)
+			{
+				case EW_TRIGGER_TYPE_STRIP:
+				{
+					SDKUnhook(hItemTrigger.iTrigger, SDKHook_StartTouch, OnTriggerTouch);
+					SDKUnhook(hItemTrigger.iTrigger, SDKHook_EndTouch, OnTriggerTouch);
+					SDKUnhook(hItemTrigger.iTrigger, SDKHook_Touch, OnTriggerTouch);
+				}
+			}
+
+			delete hItemTrigger;
+		}
+
+		delete hItem;
 	}
+
+	g_hArray_Items.Clear();
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -416,10 +419,10 @@ stock void OnRoundEnd(Event hEvent, const char[] sEvent, bool bDontBroadcast)
 //----------------------------------------------------------------------------------------------------
 public void OnEntityCreated(int iEntity, const char[] sClassname)
 {
-	if (IsValidEntity(iEntity) && g_hArray_Configs.Length)
-	{
-		SDKHook(iEntity, SDKHook_SpawnPost, OnEntitySpawnPost);
-	}
+	if (!IsValidEntity(iEntity) || !g_hArray_Configs.Length)
+		return;
+
+	SDKHook(iEntity, SDKHook_SpawnPost, OnEntitySpawnPost);
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -427,115 +430,113 @@ public void OnEntityCreated(int iEntity, const char[] sClassname)
 //----------------------------------------------------------------------------------------------------
 stock void OnEntitySpawnPost(int iEntity)
 {
-	if (IsValidEntity(iEntity) && g_hArray_Configs.Length)
+	if (!IsValidEntity(iEntity) || !g_hArray_Configs.Length)
+		return;
+
+	int iHammerID = GetEntProp(iEntity, Prop_Data, "m_iHammerID");
+
+	for (int iConfigID; iConfigID < g_hArray_Configs.Length; iConfigID++)
 	{
-		int iHammerID = GetEntProp(iEntity, Prop_Data, "m_iHammerID");
+		CConfig hConfig = g_hArray_Configs.Get(iConfigID);
 
-		for (int iConfigID; iConfigID < g_hArray_Configs.Length; iConfigID++)
+		if (hConfig.iHammerID && hConfig.iHammerID == iHammerID)
 		{
-			CConfig hConfig = g_hArray_Configs.Get(iConfigID);
+			bool bRegistered;
 
-			if (hConfig.iHammerID && hConfig.iHammerID == iHammerID)
+			for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 			{
-				bool bRegistered;
+				CItem hItem = g_hArray_Items.Get(iItemID);
 
-				for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+				if (hItem.hConfig != hConfig)
+					continue;
+				
+				if (!RegisterItemWeapon(hItem, iEntity))
+					continue;
+
+				bRegistered = true;
+				break;
+			}
+
+			if (!bRegistered)
+			{
+				CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
+
+				if (!RegisterItemWeapon(hItem, iEntity))
+					delete hItem;
+
+				InsertItemSorted(g_hArray_Items, hItem);
+				break;
+			}
+		}
+
+		for (int iConfigButtonID; iConfigButtonID < hConfig.hButtons.Length; iConfigButtonID++)
+		{
+			CConfigButton hConfigButton = hConfig.hButtons.Get(iConfigButtonID);
+
+			if (!hConfigButton.iHammerID || hConfigButton.iHammerID != iHammerID)
+				continue;
+
+			bool bRegistered;
+
+			for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+			{
+				CItem hItem = g_hArray_Items.Get(iItemID);
+
+				if (hItem.hConfig != hConfig)
+					continue;
+
+				if (!RegisterItemButton(hConfigButton, hItem, iEntity))
+					continue;
+
+				bRegistered = true;
+				break;
+			}
+
+			if (!bRegistered)
+			{
+				CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
+
+				if (!RegisterItemButton(hConfigButton, hItem, iEntity))
+					delete hItem;
+
+				InsertItemSorted(g_hArray_Items, hItem);
+				break;
+			}
+		}
+
+		for (int iConfigTriggerID; iConfigTriggerID < hConfig.hTriggers.Length; iConfigTriggerID++)
+		{
+			CConfigTrigger hConfigTrigger = hConfig.hTriggers.Get(iConfigTriggerID);
+
+			if (!hConfigTrigger.iHammerID || hConfigTrigger.iHammerID != iHammerID)
+				continue;
+
+			bool bRegistered;
+
+			for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+			{
+				CItem hItem = g_hArray_Items.Get(iItemID);
+
+				if (hItem.hConfig == hConfig)
 				{
-					CItem hItem = g_hArray_Items.Get(iItemID);
-
-					if (hItem.hConfig == hConfig)
+					if (RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
 					{
-						if (RegisterItemWeapon(hItem, iEntity))
-						{
-							bRegistered = true;
-							break;
-						}
-					}
-				}
-
-				if (!bRegistered)
-				{
-					CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
-
-					if (RegisterItemWeapon(hItem, iEntity))
-					{
-						InsertItemSorted(g_hArray_Items, hItem);
+						bRegistered = true;
 						break;
 					}
-					else delete hItem;
 				}
 			}
 
-			for (int iConfigButtonID; iConfigButtonID < hConfig.hButtons.Length; iConfigButtonID++)
+			if (!bRegistered)
 			{
-				CConfigButton hConfigButton = hConfig.hButtons.Get(iConfigButtonID);
+				CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
 
-				if (hConfigButton.iHammerID && hConfigButton.iHammerID == iHammerID)
+				if (RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
 				{
-					bool bRegistered;
-
-					for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
-					{
-						CItem hItem = g_hArray_Items.Get(iItemID);
-
-						if (hItem.hConfig == hConfig)
-						{
-							if (RegisterItemButton(hConfigButton, hItem, iEntity))
-							{
-								bRegistered = true;
-								break;
-							}
-						}
-					}
-
-					if (!bRegistered)
-					{
-						CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
-
-						if (RegisterItemButton(hConfigButton, hItem, iEntity))
-						{
-							InsertItemSorted(g_hArray_Items, hItem);
-							break;
-						}
-						else delete hItem;
-					}
+					InsertItemSorted(g_hArray_Items, hItem);
+					break;
 				}
-			}
-
-			for (int iConfigTriggerID; iConfigTriggerID < hConfig.hTriggers.Length; iConfigTriggerID++)
-			{
-				CConfigTrigger hConfigTrigger = hConfig.hTriggers.Get(iConfigTriggerID);
-
-				if (hConfigTrigger.iHammerID && hConfigTrigger.iHammerID == iHammerID)
-				{
-					bool bRegistered;
-
-					for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
-					{
-						CItem hItem = g_hArray_Items.Get(iItemID);
-
-						if (hItem.hConfig == hConfig)
-						{
-							if (RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
-							{
-								bRegistered = true;
-								break;
-							}
-						}
-					}
-
-					if (!bRegistered)
-					{
-						CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
-
-						if (RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
-						{
-							InsertItemSorted(g_hArray_Items, hItem);
-							break;
-						}
-						else delete hItem;
-					}
-				}
+				else delete hItem;
 			}
 		}
 	}
@@ -571,25 +572,23 @@ stock void InsertItemSorted(ArrayList hArray, CItem hItem)
 //----------------------------------------------------------------------------------------------------
 stock bool RegisterItemWeapon(CItem hItem, int iWeapon)
 {
-	if (IsValidEntity(iWeapon))
+	if (!IsValidEntity(iWeapon))
+		return false;
+
+	if (hItem.iWeapon != INVALID_ENT_REFERENCE || hItem.iState != EW_ENTITY_STATE_INITIAL)
+		return false;
+
+	hItem.iWeapon = iWeapon;
+	hItem.iState  = EW_ENTITY_STATE_SPAWNED;
+
+	int iOwner = INVALID_ENT_REFERENCE;
+	if ((iOwner = GetEntPropEnt(iWeapon, Prop_Data, "m_hOwnerEntity")) != INVALID_ENT_REFERENCE && IsValidClient(iOwner))
 	{
-		if (hItem.iWeapon == INVALID_ENT_REFERENCE && hItem.iState == EW_ENTITY_STATE_INITIAL)
-		{
-			hItem.iWeapon = iWeapon;
-			hItem.iState  = EW_ENTITY_STATE_SPAWNED;
-
-			int iOwner = INVALID_ENT_REFERENCE;
-			if ((iOwner = GetEntPropEnt(iWeapon, Prop_Data, "m_hOwnerEntity")) != INVALID_ENT_REFERENCE && IsValidClient(iOwner))
-			{
-				hItem.iClient = iOwner;
-				hItem.iState  = EW_ENTITY_STATE_EQUIPPED;
-			}
-
-			return true;
-		}
+		hItem.iClient = iOwner;
+		hItem.iState  = EW_ENTITY_STATE_EQUIPPED;
 	}
 
-	return false;
+	return true;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -597,78 +596,74 @@ stock bool RegisterItemWeapon(CItem hItem, int iWeapon)
 //----------------------------------------------------------------------------------------------------
 stock bool RegisterItemButton(CConfigButton hConfigButton, CItem hItem, int iButton)
 {
-	if (IsValidEntity(iButton) && !HasDuplicateItemButton(hConfigButton, hItem))
+	if (!IsValidEntity(iButton) || HasDuplicateItemButton(hConfigButton, hItem))
+		return false;
+
+	switch (hConfigButton.iType)
 	{
-		switch (hConfigButton.iType)
+		case EW_BUTTON_TYPE_USE:
 		{
-			case EW_BUTTON_TYPE_USE:
-			{
-				SDKHook(iButton, SDKHook_Use, OnButtonPress);
-			}
-			case EW_BUTTON_TYPE_OUTPUT:
-			{
-				char sButtonOutput[32];
-				hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
-
-				HookSingleEntityOutput(iButton, sButtonOutput, OnButtonOutput);
-			}
-			case EW_BUTTON_TYPE_COUNTERUP, EW_BUTTON_TYPE_COUNTERDOWN:
-			{
-				HookSingleEntityOutput(iButton, "OutValue", OnCounterOutput);
-			}
+			SDKHook(iButton, SDKHook_Use, OnButtonPress);
 		}
-
-		CItemButton hItemButton = new CItemButton(hConfigButton, hItem);
-		hItemButton.iButton = iButton;
-		hItemButton.iState  = EW_ENTITY_STATE_SPAWNED;
-
-		if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN || hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+		case EW_BUTTON_TYPE_OUTPUT:
 		{
-			int iMax = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
+			char sButtonOutput[32];
+			hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
 
-			if (hConfigButton.iMode == EW_BUTTON_MODE_COUNTERVALUE)
-			{
-				hConfigButton.iMaxUses = iMax;
-
-				if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
-					hItemButton.iCurrentUses = GetCounterValue(iButton) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
-				else if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
-					hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - GetCounterValue(iButton);
-			}
-			else
-			{
-				if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
-					hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - GetCounterValue(iButton);
-				else if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
-					hItemButton.iCurrentUses = GetCounterValue(iButton) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
-
-				hConfigButton.iMaxUses = iMax;
-			}
+			HookSingleEntityOutput(iButton, sButtonOutput, OnButtonOutput);
 		}
-
-		bool bShifted;
-
-		for (int iShiftItemButtonID; iShiftItemButtonID < hItem.hButtons.Length; iShiftItemButtonID++)
+		case EW_BUTTON_TYPE_COUNTERUP, EW_BUTTON_TYPE_COUNTERDOWN:
 		{
-			CItemButton hShiftItemButton = hItem.hButtons.Get(iShiftItemButtonID);
-
-			if (hConfigButton.iConfigID < hShiftItemButton.hConfigButton.iConfigID)
-			{
-				hItem.hButtons.ShiftUp(iShiftItemButtonID);
-				hItem.hButtons.Set(iShiftItemButtonID, hItemButton);
-
-				bShifted = true;
-				break;
-			}
+			HookSingleEntityOutput(iButton, "OutValue", OnCounterOutput);
 		}
-
-		if (!bShifted)
-			hItem.hButtons.Push(hItemButton);
-
-		return true;
 	}
 
-	return false;
+	CItemButton hItemButton = new CItemButton(hConfigButton, hItem);
+	hItemButton.iButton = iButton;
+	hItemButton.iState  = EW_ENTITY_STATE_SPAWNED;
+
+	if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN || hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+	{
+		int iCounterMax = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax"));
+		int iCounterMin = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
+		hConfigButton.iMaxUses = iCounterMax - iCounterMin;
+
+		if (hConfigButton.iMode == EW_BUTTON_MODE_COUNTERVALUE)
+		{
+			if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
+				hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue")) - iCounterMin;
+			else if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+				hItemButton.iCurrentUses = iCounterMax - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue"));
+		}
+		else
+		{
+			if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
+				hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue"));
+			else if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
+				hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue")) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
+		}
+	}
+
+	bool bShifted;
+
+	for (int iShiftItemButtonID; iShiftItemButtonID < hItem.hButtons.Length; iShiftItemButtonID++)
+	{
+		CItemButton hShiftItemButton = hItem.hButtons.Get(iShiftItemButtonID);
+
+		if (hConfigButton.iConfigID < hShiftItemButton.hConfigButton.iConfigID)
+		{
+			hItem.hButtons.ShiftUp(iShiftItemButtonID);
+			hItem.hButtons.Set(iShiftItemButtonID, hItemButton);
+
+			bShifted = true;
+			break;
+		}
+	}
+
+	if (!bShifted)
+		hItem.hButtons.Push(hItemButton);
+
+	return true;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -676,15 +671,15 @@ stock bool RegisterItemButton(CConfigButton hConfigButton, CItem hItem, int iBut
 //----------------------------------------------------------------------------------------------------
 stock bool HasDuplicateItemButton(CConfigButton hConfigButton, CItem hItem)
 {
-	if (hItem.hButtons.Length)
-	{
-		for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
-		{
-			CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+	if (!hItem.hButtons.Length)
+		return false;
 
-			if (hItemButton.hConfigButton == hConfigButton)
-				return true;
-		}
+	for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+	{
+		CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+
+		if (hItemButton.hConfigButton == hConfigButton)
+			return true;
 	}
 
 	return false;
@@ -695,45 +690,43 @@ stock bool HasDuplicateItemButton(CConfigButton hConfigButton, CItem hItem)
 //----------------------------------------------------------------------------------------------------
 stock bool RegisterItemTrigger(CConfigTrigger hConfigTrigger, CItem hItem, int iTrigger)
 {
-	if (IsValidEntity(iTrigger) && !HasDuplicateItemTrigger(hConfigTrigger, hItem))
+	if (!IsValidEntity(iTrigger) || HasDuplicateItemTrigger(hConfigTrigger, hItem))
+		return false;
+
+	switch (hConfigTrigger.iType)
 	{
-		switch (hConfigTrigger.iType)
+		case EW_TRIGGER_TYPE_STRIP:
 		{
-			case (EW_TRIGGER_TYPE_STRIP):
-			{
-				SDKHook(iTrigger, SDKHook_StartTouch, OnTriggerTouch);
-				SDKHook(iTrigger, SDKHook_EndTouch, OnTriggerTouch);
-				SDKHook(iTrigger, SDKHook_Touch, OnTriggerTouch);
-			}
+			SDKHook(iTrigger, SDKHook_StartTouch, OnTriggerTouch);
+			SDKHook(iTrigger, SDKHook_EndTouch, OnTriggerTouch);
+			SDKHook(iTrigger, SDKHook_Touch, OnTriggerTouch);
 		}
-
-		CItemTrigger hItemTrigger = new CItemTrigger(hConfigTrigger, hItem);
-		hItemTrigger.iTrigger = iTrigger;
-		hItemTrigger.iState   = EW_ENTITY_STATE_SPAWNED;
-
-		bool bShifted;
-
-		for (int iShiftItemTriggerID; iShiftItemTriggerID < hItem.hTriggers.Length; iShiftItemTriggerID++)
-		{
-			CItemTrigger hShiftItemTrigger = hItem.hTriggers.Get(iShiftItemTriggerID);
-
-			if (hConfigTrigger.iConfigID < hShiftItemTrigger.hConfigTrigger.iConfigID)
-			{
-				hItem.hTriggers.ShiftUp(iShiftItemTriggerID);
-				hItem.hTriggers.Set(iShiftItemTriggerID, hItemTrigger);
-
-				bShifted = true;
-				break;
-			}
-		}
-
-		if (!bShifted)
-			hItem.hTriggers.Push(hItemTrigger);
-
-		return true;
 	}
 
-	return false;
+	CItemTrigger hItemTrigger = new CItemTrigger(hConfigTrigger, hItem);
+	hItemTrigger.iTrigger = iTrigger;
+	hItemTrigger.iState   = EW_ENTITY_STATE_SPAWNED;
+
+	bool bShifted;
+
+	for (int iShiftItemTriggerID; iShiftItemTriggerID < hItem.hTriggers.Length; iShiftItemTriggerID++)
+	{
+		CItemTrigger hShiftItemTrigger = hItem.hTriggers.Get(iShiftItemTriggerID);
+
+		if (hConfigTrigger.iConfigID < hShiftItemTrigger.hConfigTrigger.iConfigID)
+		{
+			hItem.hTriggers.ShiftUp(iShiftItemTriggerID);
+			hItem.hTriggers.Set(iShiftItemTriggerID, hItemTrigger);
+
+			bShifted = true;
+			break;
+		}
+	}
+
+	if (!bShifted)
+		hItem.hTriggers.Push(hItemTrigger);
+
+	return true;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -741,15 +734,15 @@ stock bool RegisterItemTrigger(CConfigTrigger hConfigTrigger, CItem hItem, int i
 //----------------------------------------------------------------------------------------------------
 stock bool HasDuplicateItemTrigger(CConfigTrigger hConfigTrigger, CItem hItem)
 {
-	if (hItem.hTriggers.Length)
-	{
-		for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
-		{
-			CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
+	if (!hItem.hTriggers.Length)
+		return false;
 
-			if (hItemTrigger.hConfigTrigger == hConfigTrigger)
-				return true;
-		}
+	for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
+	{
+		CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
+
+		if (hItemTrigger.hConfigTrigger == hConfigTrigger)
+			return true;
 	}
 
 	return false;
@@ -760,39 +753,39 @@ stock bool HasDuplicateItemTrigger(CConfigTrigger hConfigTrigger, CItem hItem)
 //----------------------------------------------------------------------------------------------------
 public void OnEntityDestroyed(int iEntity)
 {
-	if (IsValidEntity(iEntity) && g_hArray_Items.Length)
+	if (!IsValidEntity(iEntity) || !g_hArray_Items.Length)
+		return;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		if (hItem.iWeapon != INVALID_ENT_REFERENCE && hItem.iWeapon == iEntity)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			hItem.iClient = INVALID_ENT_REFERENCE;
+			hItem.iWeapon = INVALID_ENT_REFERENCE;
+			hItem.iState  = EW_ENTITY_STATE_DESTROYED;
+		}
 
-			if (hItem.iWeapon != INVALID_ENT_REFERENCE && hItem.iWeapon == iEntity)
+		for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+		{
+			CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+
+			if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iEntity)
 			{
-				hItem.iClient = INVALID_ENT_REFERENCE;
-				hItem.iWeapon = INVALID_ENT_REFERENCE;
-				hItem.iState  = EW_ENTITY_STATE_DESTROYED;
+				hItemButton.iButton = INVALID_ENT_REFERENCE;
+				hItemButton.iState  = EW_ENTITY_STATE_DESTROYED;
 			}
+		}
 
-			for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+		for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
+		{
+			CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
+
+			if (hItemTrigger.iTrigger != INVALID_ENT_REFERENCE && hItemTrigger.iTrigger == iEntity)
 			{
-				CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
-
-				if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iEntity)
-				{
-					hItemButton.iButton = INVALID_ENT_REFERENCE;
-					hItemButton.iState  = EW_ENTITY_STATE_DESTROYED;
-				}
-			}
-
-			for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
-			{
-				CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
-
-				if (hItemTrigger.iTrigger != INVALID_ENT_REFERENCE && hItemTrigger.iTrigger == iEntity)
-				{
-					hItemTrigger.iTrigger = INVALID_ENT_REFERENCE;
-					hItemTrigger.iState   = EW_ENTITY_STATE_DESTROYED;
-				}
+				hItemTrigger.iTrigger = INVALID_ENT_REFERENCE;
+				hItemTrigger.iState   = EW_ENTITY_STATE_DESTROYED;
 			}
 		}
 	}
@@ -813,23 +806,23 @@ public void OnClientPutInServer(int iClient)
 //----------------------------------------------------------------------------------------------------
 public void OnClientDisconnect(int iClient)
 {
-	if (g_hArray_Items.Length)
+	if (!g_hArray_Items.Length)
+		return;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			hItem.iClient = INVALID_ENT_REFERENCE;
+			hItem.iState = EW_ENTITY_STATE_DROPPED;
 
-			if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
-			{
-				hItem.iClient = INVALID_ENT_REFERENCE;
-				hItem.iState = EW_ENTITY_STATE_DROPPED;
-
-				Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
-				Call_PushCell(iClient);
-				Call_PushCell(hItem);
-				Call_PushCell(EW_WEAPON_INTERACTION_DISCONNECT);
-				Call_Finish();
-			}
+			Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
+			Call_PushCell(iClient);
+			Call_PushCell(hItem);
+			Call_PushCell(EW_WEAPON_INTERACTION_DISCONNECT);
+			Call_Finish();
 		}
 	}
 }
@@ -841,23 +834,23 @@ stock void OnClientDeath(Event hEvent, const char[] sEvent, bool bDontBroadcast)
 {
 	int iClient = GetClientOfUserId(hEvent.GetInt("userid"));
 
-	if (IsValidClient(iClient) && g_hArray_Items.Length)
+	if (!IsValidClient(iClient) || !g_hArray_Items.Length)
+		return;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			hItem.iClient = INVALID_ENT_REFERENCE;
+			hItem.iState = EW_ENTITY_STATE_DROPPED;
 
-			if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
-			{
-				hItem.iClient = INVALID_ENT_REFERENCE;
-				hItem.iState = EW_ENTITY_STATE_DROPPED;
-
-				Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
-				Call_PushCell(iClient);
-				Call_PushCell(hItem);
-				Call_PushCell(EW_WEAPON_INTERACTION_DEATH);
-				Call_Finish();
-			}
+			Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
+			Call_PushCell(iClient);
+			Call_PushCell(hItem);
+			Call_PushCell(EW_WEAPON_INTERACTION_DEATH);
+			Call_Finish();
 		}
 	}
 }
@@ -867,27 +860,28 @@ stock void OnClientDeath(Event hEvent, const char[] sEvent, bool bDontBroadcast)
 //----------------------------------------------------------------------------------------------------
 stock void OnWeaponPickup(int iClient, int iWeapon)
 {
-	if (IsValidClient(iClient) && IsValidEntity(iWeapon) && g_hArray_Items.Length)
+	if (!IsValidClient(iClient) || !IsValidEntity(iWeapon) || !g_hArray_Items.Length)
+		return;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		if (hItem.iWeapon != INVALID_ENT_REFERENCE && hItem.iWeapon == iWeapon)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			hItem.iClient = iClient;
+			hItem.iState = EW_ENTITY_STATE_EQUIPPED;
 
-			if (hItem.iWeapon != INVALID_ENT_REFERENCE && hItem.iWeapon == iWeapon)
-			{
-				hItem.iClient = iClient;
-				hItem.iState = EW_ENTITY_STATE_EQUIPPED;
+			Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
+			Call_PushCell(iClient);
+			Call_PushCell(hItem);
+			Call_PushCell(EW_WEAPON_INTERACTION_PICKUP);
+			Call_Finish();
 
-				Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
-				Call_PushCell(iClient);
-				Call_PushCell(hItem);
-				Call_PushCell(EW_WEAPON_INTERACTION_PICKUP);
-				Call_Finish();
-
-				return;
-			}
+			return;
 		}
 	}
+
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -895,25 +889,25 @@ stock void OnWeaponPickup(int iClient, int iWeapon)
 //----------------------------------------------------------------------------------------------------
 stock void OnWeaponDrop(int iClient, int iWeapon)
 {
-	if (IsValidClient(iClient) && IsValidEntity(iWeapon) && g_hArray_Items.Length)
+	if (!IsValidClient(iClient) || !IsValidEntity(iWeapon) || !g_hArray_Items.Length)
+		return;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		if (hItem.iWeapon != INVALID_ENT_REFERENCE && hItem.iWeapon == iWeapon)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			hItem.iClient = INVALID_ENT_REFERENCE;
+			hItem.iState = EW_ENTITY_STATE_DROPPED;
 
-			if (hItem.iWeapon != INVALID_ENT_REFERENCE && hItem.iWeapon == iWeapon)
-			{
-				hItem.iClient = INVALID_ENT_REFERENCE;
-				hItem.iState = EW_ENTITY_STATE_DROPPED;
+			Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
+			Call_PushCell(iClient);
+			Call_PushCell(hItem);
+			Call_PushCell(EW_WEAPON_INTERACTION_DROP);
+			Call_Finish();
 
-				Call_StartForward(g_hFwd_OnClientItemWeaponInteract);
-				Call_PushCell(iClient);
-				Call_PushCell(hItem);
-				Call_PushCell(EW_WEAPON_INTERACTION_DROP);
-				Call_Finish();
-
-				return;
-			}
+			return;
 		}
 	}
 }
@@ -931,37 +925,37 @@ public void OnGameFrame()
 //----------------------------------------------------------------------------------------------------
 stock Action OnButtonPress(int iButton, int iClient)
 {
-	if (IsValidClient(iClient) && IsValidEntity(iButton) && g_hArray_Items.Length)
+	if (!IsValidClient(iClient) || !IsValidEntity(iButton) || !g_hArray_Items.Length)
+		return Plugin_Handled;
+
+	if (HasEntProp(iButton, Prop_Data, "m_bLocked") &&
+		GetEntProp(iButton, Prop_Data, "m_bLocked"))
+		return Plugin_Handled;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		if (HasEntProp(iButton, Prop_Data, "m_bLocked") &&
-			GetEntProp(iButton, Prop_Data, "m_bLocked"))
-			return Plugin_Handled;
+		CItem hItem = g_hArray_Items.Get(iItemID);
 
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
-
-			if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
+			for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
 			{
-				for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+				CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+
+				if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iButton)
 				{
-					CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
-
-					if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iButton)
+					if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_USE)
 					{
-						if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_USE)
+						if (HasEntProp(iButton, Prop_Data, "m_flWaitTime"))
 						{
-							if (HasEntProp(iButton, Prop_Data, "m_flWaitTime"))
+							if (hItemButton.flWaitTime < g_flGameFrameTime)
 							{
-								if (hItemButton.flWaitTime < g_flGameFrameTime)
-								{
-									hItemButton.flWaitTime = g_flGameFrameTime + GetEntPropFloat(iButton, Prop_Data, "m_flWaitTime");
-								}
-								else return Plugin_Handled;
+								hItemButton.flWaitTime = g_flGameFrameTime + GetEntPropFloat(iButton, Prop_Data, "m_flWaitTime");
 							}
-
-							return ProcessButtonPress(iClient, hItem, hItemButton);
+							else return Plugin_Handled;
 						}
+
+						return ProcessButtonPress(iClient, hItem, hItemButton);
 					}
 				}
 			}
@@ -976,32 +970,30 @@ stock Action OnButtonPress(int iButton, int iClient)
 //----------------------------------------------------------------------------------------------------
 stock Action OnButtonOutput(const char[] sOutput, int iButton, int iClient, float flDelay)
 {
-	if (IsValidClient(iClient) && IsValidEntity(iButton) && g_hArray_Items.Length)
+	if (!IsValidClient(iClient) || !IsValidEntity(iButton) || !g_hArray_Items.Length)
+		return Plugin_Handled;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		if (hItem.iClient == INVALID_ENT_REFERENCE || hItem.iClient != iClient)
+			continue;
+
+		for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
 
-			if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
+			if (hItemButton.iButton == INVALID_ENT_REFERENCE || hItemButton.iButton != iButton)
+				continue;
+
+			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_OUTPUT)
 			{
-				for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
-				{
-					CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+				char sButtonOutput[32];
+				hItemButton.hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
 
-					if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iButton)
-					{
-						if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_OUTPUT)
-						{
-							char sButtonOutput[32];
-							hItemButton.hConfigButton.GetOutput(sButtonOutput, sizeof(sButtonOutput));
-
-							if (StrEqual(sOutput, sButtonOutput, false))
-							{
-								return ProcessButtonPress(iClient, hItem, hItemButton);
-							}
-						}
-					}
-				}
+				if (StrEqual(sOutput, sButtonOutput, false))
+					return ProcessButtonPress(iClient, hItem, hItemButton);
 			}
 		}
 	}
@@ -1021,15 +1013,15 @@ stock Action OnCounterOutput(const char[] sOutput, int iButton, int iClient, flo
 	{
 		CItem hItem = g_hArray_Items.Get(iItemID);
 
-		if (hItem.iClient != INVALID_ENT_REFERENCE)
-		{
-			for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
-			{
-				CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+		if (hItem.iClient == INVALID_ENT_REFERENCE)
+			continue;
 
-				if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iButton)
-					return ProcessCounterValue(iClient, hItem, hItemButton);
-			}
+		for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+		{
+			CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+
+			if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iButton)
+				return ProcessCounterValue(iClient, hItem, hItemButton);
 		}
 	}
 
@@ -1041,63 +1033,62 @@ stock Action OnCounterOutput(const char[] sOutput, int iButton, int iClient, flo
 //----------------------------------------------------------------------------------------------------
 stock Action ProcessButtonPress(int iClient, CItem hItem, CItemButton hItemButton)
 {
-	if (hItem.flReadyTime <= g_flGameFrameTime)
+	if (hItem.flReadyTime > g_flGameFrameTime)
+		return Plugin_Handled;
+
+	bool bResult = true;
+	Call_StartForward(g_hFwd_OnClientItemButtonCanInteract);
+	Call_PushCell(iClient);
+	Call_PushCell(hItemButton);
+	Call_Finish(bResult);
+
+	if (!bResult)
+		return Plugin_Handled;
+
+	switch (hItemButton.hConfigButton.iMode)
 	{
-		bool bResult = true;
-		Call_StartForward(g_hFwd_OnClientItemButtonCanInteract);
-		Call_PushCell(iClient);
-		Call_PushCell(hItemButton);
-		Call_Finish(bResult);
-
-		if (bResult)
+		case EW_BUTTON_MODE_COOLDOWN:
 		{
-			switch (hItemButton.hConfigButton.iMode)
+			if (hItemButton.flReadyTime < g_flGameFrameTime)
+				hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
+			else
+				return Plugin_Handled;
+		}
+		case EW_BUTTON_MODE_MAXUSES:
+		{
+			if (hItemButton.flReadyTime < g_flGameFrameTime && hItemButton.iCurrentUses < hItemButton.hConfigButton.iMaxUses)
 			{
-				case EW_BUTTON_MODE_COOLDOWN:
-				{
-					if (hItemButton.flReadyTime < g_flGameFrameTime)
-					{
-						hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
-					}
-					else return Plugin_Handled;
-				}
-				case EW_BUTTON_MODE_MAXUSES:
-				{
-					if (hItemButton.flReadyTime < g_flGameFrameTime && hItemButton.iCurrentUses < hItemButton.hConfigButton.iMaxUses)
-					{
-						hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
-						hItemButton.iCurrentUses++;
-					}
-					else return Plugin_Handled;
-				}
-				case EW_BUTTON_MODE_COOLDOWN_CHARGES:
-				{
-					if (hItemButton.flReadyTime < g_flGameFrameTime)
-					{
-						hItemButton.iCurrentUses++;
+				hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
+				hItemButton.iCurrentUses++;
+			}
+			else
+				return Plugin_Handled;
+		}
+		case EW_BUTTON_MODE_COOLDOWN_CHARGES:
+		{
+			if (hItemButton.flReadyTime < g_flGameFrameTime)
+			{
+				hItemButton.iCurrentUses++;
 
-						if (hItemButton.iCurrentUses >= hItemButton.hConfigButton.iMaxUses)
-						{
-							hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
-							hItemButton.iCurrentUses = 0;
-						}
-					}
-					else return Plugin_Handled;
+				if (hItemButton.iCurrentUses >= hItemButton.hConfigButton.iMaxUses)
+				{
+					hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
+					hItemButton.iCurrentUses = 0;
 				}
 			}
-
-			hItem.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flItemCooldown;
-
-			Call_StartForward(g_hFwd_OnClientItemButtonInteract);
-			Call_PushCell(iClient);
-			Call_PushCell(hItemButton);
-			Call_Finish();
-
-			return Plugin_Continue;
+			else
+				return Plugin_Handled;
 		}
-		else return Plugin_Handled;
 	}
-	else return Plugin_Handled;
+
+	hItem.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flItemCooldown;
+
+	Call_StartForward(g_hFwd_OnClientItemButtonInteract);
+	Call_PushCell(iClient);
+	Call_PushCell(hItemButton);
+	Call_Finish();
+
+	return Plugin_Continue;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -1108,19 +1099,6 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 	if (hItem.flReadyTime > g_flGameFrameTime)
 		return Plugin_Handled;
 
-	bool bCounterValueType = hItemButton.hConfigButton.iMode == EW_BUTTON_MODE_COUNTERVALUE;
-	if (!bCounterValueType)
-	{
-		bool bResult = true;
-		Call_StartForward(g_hFwd_OnClientItemButtonCanInteract);
-		Call_PushCell(iClient);
-		Call_PushCell(hItemButton);
-		Call_Finish(bResult);
-
-		if (!bResult)
-			return Plugin_Handled;
-	}
-
 	int iNewCurrentUses = 0;
 
 	switch (hItemButton.hConfigButton.iMode)
@@ -1128,22 +1106,20 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 		case EW_BUTTON_MODE_COOLDOWN:
 		{
 			if (hItemButton.flReadyTime < g_flGameFrameTime)
-			{
 				hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
-			}
-			else return Plugin_Handled;
+			else
+				return Plugin_Handled;
 		}
 		case EW_BUTTON_MODE_MAXUSES:
 		{
-			int iMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
-			int iMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
-			int iValue = GetCounterValue(hItemButton.iButton);
-			hItemButton.hConfigButton.iMaxUses = iMax - iMin;
+			int iCounterMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
+			int iCounterMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
+			hItemButton.hConfigButton.iMaxUses = iCounterMax - iCounterMin;
 
 			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
-				iNewCurrentUses = iValue - iMin;
+				iNewCurrentUses = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_OutValue")) - iCounterMin;
 			else if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
-				iNewCurrentUses = iMax - iValue;
+				iNewCurrentUses = iCounterMax - RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_OutValue"));
 
 			if (iNewCurrentUses <= hItemButton.iCurrentUses)
 			{
@@ -1156,15 +1132,14 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 		}
 		case EW_BUTTON_MODE_COOLDOWN_CHARGES:
 		{
-			int iMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
-			int iMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
-			int iValue = GetCounterValue(hItemButton.iButton);
-			int iMaxUses = iMax - iMin;
+			int iCounterMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
+			int iCounterMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
+			int iMaxUses = iCounterMax - iCounterMin;
 
 			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
-				iNewCurrentUses = iValue - iMin;
+				iNewCurrentUses = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_OutValue")) - iCounterMin;
 			else if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
-				iNewCurrentUses = iMax - iValue;
+				iNewCurrentUses = iCounterMax - RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_OutValue"));
 
 			if (iNewCurrentUses <= hItemButton.iCurrentUses)
 			{
@@ -1179,26 +1154,23 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 		}
 		case EW_BUTTON_MODE_COUNTERVALUE:
 		{
-			int iMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
-			int iMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
-			hItemButton.hConfigButton.iMaxUses = iMax - iMin;
+			int iCounterMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
+			int iCounterMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
+			hItemButton.hConfigButton.iMaxUses = iCounterMax - iCounterMin;
 
 			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
-				hItemButton.iCurrentUses = GetCounterValue(hItemButton.iButton) - iMin;
+				hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_OutValue")) - iCounterMin;
 			else if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
-				hItemButton.iCurrentUses = iMax - GetCounterValue(hItemButton.iButton);
+				hItemButton.iCurrentUses = iCounterMax - RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_OutValue"));
 		}
 	}
 
 	hItem.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flItemCooldown;
 
-	if (!bCounterValueType)
-	{
-		Call_StartForward(g_hFwd_OnClientItemButtonInteract);
-		Call_PushCell(iClient);
-		Call_PushCell(hItemButton);
-		Call_Finish();
-	}
+	Call_StartForward(g_hFwd_OnClientItemButtonInteract);
+	Call_PushCell(iClient);
+	Call_PushCell(hItemButton);
+	Call_Finish();
 
 	return Plugin_Continue;
 }
@@ -1208,41 +1180,40 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 //----------------------------------------------------------------------------------------------------
 stock Action OnTriggerTouch(int iTrigger, int iClient)
 {
-	if (IsValidClient(iClient) && IsValidEntity(iTrigger) && g_hArray_Items.Length)
+	if (!IsValidClient(iClient) || !IsValidEntity(iTrigger) || !g_hArray_Items.Length)
+		return Plugin_Handled;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
+		CItem hItem = g_hArray_Items.Get(iItemID);
+
+		for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
 		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+			CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
 
-			for (int iItemTriggerID; iItemTriggerID < hItem.hTriggers.Length; iItemTriggerID++)
+			if (hItemTrigger.iTrigger == INVALID_ENT_REFERENCE || hItemTrigger.iTrigger != iTrigger)
+				continue;
+
+			if (hItemTrigger.hConfigTrigger.iType == EW_TRIGGER_TYPE_STRIP)
 			{
-				CItemTrigger hItemTrigger = hItem.hTriggers.Get(iItemTriggerID);
+				if (g_bIntermission)
+					return Plugin_Handled;
 
-				if (hItemTrigger.iTrigger != INVALID_ENT_REFERENCE && hItemTrigger.iTrigger == iTrigger)
-				{
-					if (hItemTrigger.hConfigTrigger.iType == EW_TRIGGER_TYPE_STRIP)
-					{
-						if (g_bIntermission)
-							return Plugin_Handled;
+				bool bResult = true;
+				Call_StartForward(g_hFwd_OnClientItemTriggerCanInteract);
+				Call_PushCell(iClient);
+				Call_PushCell(hItemTrigger);
+				Call_Finish(bResult);
 
-						bool bResult = true;
-						Call_StartForward(g_hFwd_OnClientItemTriggerCanInteract);
-						Call_PushCell(iClient);
-						Call_PushCell(hItemTrigger);
-						Call_Finish(bResult);
+				if (!bResult)
+					return Plugin_Handled;
 
-						if (bResult)
-						{
-							Call_StartForward(g_hFwd_OnClientItemTriggerInteract);
-							Call_PushCell(iClient);
-							Call_PushCell(hItemTrigger);
-							Call_Finish();
+				Call_StartForward(g_hFwd_OnClientItemTriggerInteract);
+				Call_PushCell(iClient);
+				Call_PushCell(hItemTrigger);
+				Call_Finish();
 
-							return Plugin_Continue;
-						}
-						else return Plugin_Handled;
-					}
-				}
+				return Plugin_Continue;
 			}
 		}
 	}
@@ -1255,29 +1226,29 @@ stock Action OnTriggerTouch(int iTrigger, int iClient)
 //----------------------------------------------------------------------------------------------------
 stock Action OnWeaponTouch(int iClient, int iWeapon)
 {
-	if (IsValidClient(iClient) && IsValidEntity(iWeapon) && g_hArray_Items.Length)
+	if (!IsValidClient(iClient) || !IsValidEntity(iWeapon) || !g_hArray_Items.Length)
+		return Plugin_Continue;
+
+	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
-		for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
-		{
-			CItem hItem = g_hArray_Items.Get(iItemID);
+		CItem hItem = g_hArray_Items.Get(iItemID);
 
-			if (hItem.iWeapon != INVALID_ENT_REFERENCE && hItem.iWeapon == iWeapon)
-			{
-				if (g_bIntermission)
-					return Plugin_Handled;
+		if (hItem.iWeapon == INVALID_ENT_REFERENCE || hItem.iWeapon != iWeapon)
+			continue;
 
-				bool bResult = true;
-				Call_StartForward(g_hFwd_OnClientItemWeaponCanInteract);
-				Call_PushCell(iClient);
-				Call_PushCell(hItem);
-				Call_Finish(bResult);
+		if (g_bIntermission)
+			return Plugin_Handled;
 
-				if (bResult)
-					return Plugin_Continue;
-				else
-					return Plugin_Handled;
-			}
-		}
+		bool bResult = true;
+		Call_StartForward(g_hFwd_OnClientItemWeaponCanInteract);
+		Call_PushCell(iClient);
+		Call_PushCell(hItem);
+		Call_Finish(bResult);
+
+		if (bResult)
+			return Plugin_Continue;
+		else
+			return Plugin_Handled;
 	}
 
 	return Plugin_Continue;
@@ -1289,17 +1260,6 @@ stock Action OnWeaponTouch(int iClient, int iWeapon)
 stock bool IsValidClient(int iClient)
 {
 	return ((1 <= iClient <= MaxClients) && IsClientConnected(iClient));
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose:
-//----------------------------------------------------------------------------------------------------
-stock int GetCounterValue(int counter)
-{
-	if (g_iOutValueOffset == -1)
-		g_iOutValueOffset = FindDataMapInfo(counter, "m_OutValue");
-
-	return RoundFloat(GetEntDataFloat(counter, g_iOutValueOffset));
 }
 
 //----------------------------------------------------------------------------------------------------
