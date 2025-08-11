@@ -15,6 +15,10 @@
 #include <sdktools>
 #include <entWatch_core>
 
+Handle SDKCall_GetSlot;
+Handle SDKCall_OnPickedUp;
+Handle SDKCall_BumpWeapon;
+
 //----------------------------------------------------------------------------------------------------
 // Purpose:
 //----------------------------------------------------------------------------------------------------
@@ -35,6 +39,75 @@ public void OnPluginStart()
 	LoadTranslations("entWatch.phrases");
 
 	RegAdminCmd("sm_etransfer", Command_TransferItem, ADMFLAG_BAN);
+
+	LoadGameConfig();
+}
+
+//----------------------------------------------------------------------------------------------------
+// Purpose: Loads GameData
+//----------------------------------------------------------------------------------------------------
+stock void LoadGameConfig()
+{
+	GameData hGameConf;
+	if ((hGameConf = new GameData("entWatch.games")) == null)
+	{
+		SetFailState("Failed to load \"entWatch.games\" game config!");
+		return;
+	}
+
+	// "CBaseCombatWeapon::GetSlot"
+	StartPrepSDKCall(SDKCall_Entity);
+	if (!PrepSDKCall_SetFromConf(hGameConf, SDKConf_Virtual, "CBaseCombatWeapon::GetSlot"))
+	{
+		delete hGameConf;
+		SetFailState("Failed to setup SDKCall \"SDKCall_GetSlot\"!");
+		return;
+	}
+
+	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_Plain);
+	if ((SDKCall_GetSlot = EndPrepSDKCall()) == null)
+	{
+		delete hGameConf;
+		SetFailState("Failed to end SDKCall \"SDKCall_GetSlot\"!");
+		return;
+	}
+
+	// "CBaseCombatWeapon::OnPickedUp"
+	StartPrepSDKCall(SDKCall_Entity);
+	if (!PrepSDKCall_SetFromConf(hGameConf, SDKConf_Virtual, "CBaseCombatWeapon::OnPickedUp"))
+	{
+		delete hGameConf;
+		SetFailState("Failed to setup SDKCall \"SDKCall_OnPickedUp\"!");
+		return;
+	}
+
+	PrepSDKCall_AddParameter(SDKType_CBaseEntity, SDKPass_Pointer);
+	if ((SDKCall_OnPickedUp = EndPrepSDKCall()) == null)
+	{
+		delete hGameConf;
+		SetFailState("Failed to end SDKCall \"SDKCall_OnPickedUp\"!");
+		return;
+	}
+
+	// "CBasePlayer::BumpWeapon"
+	StartPrepSDKCall(SDKCall_Player);
+	if (!PrepSDKCall_SetFromConf(hGameConf, SDKConf_Virtual, "CBasePlayer::BumpWeapon"))
+	{
+		delete hGameConf;
+		SetFailState("Failed to setup SDKCall \"SDKCall_BumpWeapon\"!");
+		return;
+	}
+
+	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_Plain);
+	PrepSDKCall_AddParameter(SDKType_CBaseEntity, SDKPass_Pointer);
+	if ((SDKCall_BumpWeapon = EndPrepSDKCall()) == null)
+	{
+		delete hGameConf;
+		SetFailState("Failed to end SDKCall \"SDKCall_BumpWeapon\"!");
+		return;
+	}
+
+	delete hGameConf;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -44,7 +117,7 @@ public Action Command_TransferItem(int iClient, int args)
 {
 	if (GetCmdArgs() < 2)
 	{
-		ReplyToCommand(iClient, "\x04[entWatch] \x01Usage: sm_etransfer <#userid/name> <#userid/name>");
+		ReplyToCommand(iClient, "\x04[entWatch] \x01Usage: sm_etransfer <#userid/name/$item> <#userid/name>");
 		return Plugin_Handled;
 	}
 
@@ -92,7 +165,7 @@ public Action Command_TransferItem(int iClient, int args)
 
 					hItem.hConfig.bShowMessages = false;
 
-					EquipPlayerWeapon(reciever, hItem.iWeapon);
+					FixedEquipPlayerWeapon(reciever, hItem.iWeapon);
 
 					hItem.hConfig.bShowMessages = bShowMessages;
 					bTransfered = true;
@@ -147,7 +220,7 @@ public Action Command_TransferItem(int iClient, int args)
 
 					hItem.hConfig.bShowMessages = false;
 
-					EquipPlayerWeapon(reciever, hItem.iWeapon);
+					FixedEquipPlayerWeapon(reciever, hItem.iWeapon);
 
 					hItem.hConfig.bShowMessages = bShowMessages;
 					bTransfered = true;
@@ -166,4 +239,18 @@ public Action Command_TransferItem(int iClient, int args)
 	}
 
 	return Plugin_Handled;
+}
+
+//----------------------------------------------------------------------------------------------------
+// Purpose:
+//----------------------------------------------------------------------------------------------------
+stock void FixedEquipPlayerWeapon(int iClient, int iWeapon)
+{
+	int iWeaponSlot = SDKCall(SDKCall_GetSlot, iWeapon);
+	int WeaponInSlot = GetPlayerWeaponSlot(iClient, iWeaponSlot);
+	if (WeaponInSlot != -1)
+		SDKHooks_DropWeapon(iClient, WeaponInSlot, NULL_VECTOR, NULL_VECTOR);
+
+	if (SDKCall(SDKCall_BumpWeapon, iClient, iWeapon))
+		SDKCall(SDKCall_OnPickedUp, iWeapon, iClient);
 }

@@ -84,10 +84,10 @@ stock void LoadGameConfig()
 //----------------------------------------------------------------------------------------------------
 public void OnEntityCreated(int iEntity, const char[] sClassname)
 {
-	if (IsValidEntity(iEntity) && StrEqual(sClassname, "point_servercommand"))
-	{
-		g_hAcceptInput.HookEntity(Hook_Pre, iEntity, OnAcceptInput);
-	}
+	if (!IsValidEntity(iEntity) || StrEqual(sClassname, "point_servercommand"))
+		return;
+
+	g_hAcceptInput.HookEntity(Hook_Pre, iEntity, OnAcceptInput);
 }
 
 //----------------------------------------------------------------------------------------------------

@@ -48,24 +48,19 @@ stock void LoadGameConfig()
 		return;
 	}
 
-	int iOffset;
-	if ((iOffset = hGameConf.GetOffset("CBaseCombatWeapon::GetSlot")) == -1)
-	{
-		SetFailState("Failed to load \"CBaseCombatWeapon::GetSlot\" offset!");
-		return;
-	}
-
 	StartPrepSDKCall(SDKCall_Entity);
-	if (!PrepSDKCall_SetVirtual(iOffset))
+	if (!PrepSDKCall_SetFromConf(hGameConf, SDKConf_Virtual, "CBaseCombatWeapon::GetSlot"))
 	{
-		SetFailState("Failed to setup \"PrepSDKCall_SetVirtual\"!");
+		delete hGameConf;
+		SetFailState("Failed to setup SDKCall \"SDKCall_GetSlot\"!");
 		return;
 	}
 
 	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_Plain);
 	if ((SDKCall_GetSlot = EndPrepSDKCall()) == null)
 	{
-		SetFailState("Failed to setup SDKCall \"SDKCall_GetSlot\"!");
+		delete hGameConf;
+		SetFailState("Failed to end SDKCall \"SDKCall_GetSlot\"!");
 		return;
 	}
 

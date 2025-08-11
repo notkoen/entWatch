@@ -78,16 +78,16 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 	char sTranslation[32];
 	switch (iInteractionType)
 	{
-		case (EW_WEAPON_INTERACTION_DROP):
+		case EW_WEAPON_INTERACTION_DROP:
 			Format(sTranslation, sizeof(sTranslation), "Item Drop");
 
-		case (EW_WEAPON_INTERACTION_DEATH):
+		case EW_WEAPON_INTERACTION_DEATH:
 			Format(sTranslation, sizeof(sTranslation), "Item Death");
 
-		case (EW_WEAPON_INTERACTION_PICKUP):
+		case EW_WEAPON_INTERACTION_PICKUP:
 			Format(sTranslation, sizeof(sTranslation), "Item Pickup");
 
-		case (EW_WEAPON_INTERACTION_DISCONNECT):
+		case EW_WEAPON_INTERACTION_DISCONNECT:
 			Format(sTranslation, sizeof(sTranslation), "Item Disconnect");
 	}
 
@@ -111,9 +111,9 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 		char sTeamColor[8];
 		switch (GetClientTeam(iClient))
 		{
-			case (2):
+			case 2:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x02");
-			case (3):
+			case 3:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x0C");
 			default:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x08");
@@ -159,9 +159,9 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 		char sTeamColor[8];
 		switch (GetClientTeam(iClient))
 		{
-			case (2):
+			case 2:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x02");
-			case (3):
+			case 3:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x0C");
 			default:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x08");
