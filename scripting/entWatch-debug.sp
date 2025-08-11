@@ -89,12 +89,6 @@ public Action Command_PrintItems(int iClient, int iArgs)
 
 	ArrayList hItems = EW_GetItemsArray();
 
-	if (!hItems.Length)
-	{
-		ReplyToCommand(iClient, "\x04[entWatch] \x01Error: Item array returned empty!");
-		return Plugin_Handled;
-	}
-
 	for (int iItemID; iItemID < hItems.Length; iItemID++)
 	{
 		CItem hItem = hItems.Get(iItemID);
@@ -176,12 +170,6 @@ public Action Command_PrintConfigs(int iClient, int iArgs)
 	}
 
 	ArrayList hConfigs = EW_GetConfigsArray();
-
-	if (!hConfigs.Length)
-	{
-		ReplyToCommand(iClient, "\x04[entWatch] \x01Error: Item array returned empty!");
-		return Plugin_Handled;
-	}
 
 	for (int iConfigID; iConfigID < hConfigs.Length; iConfigID++)
 	{
@@ -267,12 +255,6 @@ public Action Command_TraceItems(int iClient, int iArgs)
 		return Plugin_Handled;
 
 	ArrayList hItems = EW_GetItemsArray();
-
-	if (!hItems.Length)
-	{
-		ReplyToCommand(iClient, "\x04[entWatch] \x01Error: Item array returned empty!");
-		return Plugin_Handled;
-	}
 
 	for (int iItemID; iItemID < hItems.Length; iItemID++)
 	{

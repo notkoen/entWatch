@@ -87,9 +87,6 @@ stock Action OnBeacons(Handle hTimer)
 
 	ArrayList hItems = EW_GetItemsArray();
 
-	if (!hItems.Length)
-		return Plugin_Continue;
-
 	for (int iItemID; iItemID < hItems.Length; iItemID++)
 	{
 		CItem hItem = hItems.Get(iItemID);
