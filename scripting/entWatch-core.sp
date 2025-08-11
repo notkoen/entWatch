@@ -936,28 +936,27 @@ stock Action OnButtonPress(int iButton, int iClient)
 	{
 		CItem hItem = g_hArray_Items.Get(iItemID);
 
-		if (hItem.iClient != INVALID_ENT_REFERENCE && hItem.iClient == iClient)
+		if (hItem.iClient == INVALID_ENT_REFERENCE || hItem.iClient != iClient)
+			continue;
+
+		for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
 		{
-			for (int iItemButtonID; iItemButtonID < hItem.hButtons.Length; iItemButtonID++)
+			CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
+
+			if (hItemButton.iButton == INVALID_ENT_REFERENCE || hItemButton.iButton != iButton)
+				continue;
+
+			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_USE)
 			{
-				CItemButton hItemButton = hItem.hButtons.Get(iItemButtonID);
-
-				if (hItemButton.iButton != INVALID_ENT_REFERENCE && hItemButton.iButton == iButton)
+				if (HasEntProp(iButton, Prop_Data, "m_flWaitTime"))
 				{
-					if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_USE)
-					{
-						if (HasEntProp(iButton, Prop_Data, "m_flWaitTime"))
-						{
-							if (hItemButton.flWaitTime < g_flGameFrameTime)
-							{
-								hItemButton.flWaitTime = g_flGameFrameTime + GetEntPropFloat(iButton, Prop_Data, "m_flWaitTime");
-							}
-							else return Plugin_Handled;
-						}
-
-						return ProcessButtonPress(iClient, hItem, hItemButton);
-					}
+					if (hItemButton.flWaitTime < g_flGameFrameTime)
+						hItemButton.flWaitTime = g_flGameFrameTime + GetEntPropFloat(iButton, Prop_Data, "m_flWaitTime");
+					else
+						return Plugin_Handled;
 				}
+
+				return ProcessButtonPress(iClient, hItem, hItemButton);
 			}
 		}
 	}
