@@ -16,7 +16,9 @@
 /* CONVARS */
 ConVar g_hCVar_UseHEXColors;
 ConVar g_hCVar_ColorConfig;
+ConVar g_hCVar_MessageMode;
 
+/* STRUCTS */
 enum struct ColorStruct
 {
 	char sTag[8];           // String: Hex color of entwatch tag
@@ -63,6 +65,7 @@ public void OnPluginStart()
 {
 	LoadTranslations("entWatch.phrases");
 
+	g_hCVar_MessageMode = CreateConVar("sm_emessages_mode", "1", "Entwatch message recipient mode (1 = All, 2 = Team Only + Admin, 3 = Team Only)", FCVAR_NONE, true, 1.0, true, 3.0);
 	g_hCVar_UseHEXColors = CreateConVar("sm_emessages_usehex", "1", "Allow HEX color codes to be used.", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_hCVar_ColorConfig = CreateConVar("sm_emessages_config", "classic", "Name of entWatch-message color config file");
 	g_hCVar_ColorConfig.AddChangeHook(OnConVarChange);
@@ -161,7 +164,35 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 		char sItemColor[8];
 		hItem.hConfig.GetColor(sItemColor, sizeof(sItemColor));
 
-		PrintToChatAll("\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, sColor, sTranslation, sItemColor, sItemName);
+		switch (g_hCVar_MessageMode.IntValue)
+		{
+			case 2:
+			{
+				int iTeam = GetClientTeam(iClient);
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam || !CheckCommandAccess(i, "", ADMFLAG_BAN))
+						continue;
+
+					PrintToChat(i, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, sColor, sTranslation, sItemColor, sItemName);
+				}
+			}
+			case 3:
+			{
+				int iTeam = GetClientTeam(iClient);
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam)
+						continue;
+
+					PrintToChat(i, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, sColor, sTranslation, sItemColor, sItemName);
+				}
+			}
+			default:
+			{
+				PrintToChatAll("\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, sColor, sTranslation, sItemColor, sItemName);
+			}
+		}
 	}
 	else
 	{
@@ -171,7 +202,9 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 		// x0C = Humans
 
 		char sTeamColor[8];
-		switch (GetClientTeam(iClient))
+		int iTeam = GetClientTeam(iClient);
+
+		switch (iTeam)
 		{
 			case 2:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x02");
@@ -181,8 +214,34 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x08");
 		}
 
-		// CSGO: Requires a character before colors will work, so add a space.
-		PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, sTranslation, sTeamColor, sItemName);
+		switch (g_hCVar_MessageMode.IntValue)
+		{
+			case 2:
+			{
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam || !CheckCommandAccess(i, "", ADMFLAG_BAN))
+						continue;
+
+					PrintToChat(i, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, sTranslation, sTeamColor, sItemName);
+				}
+			}
+			case 3:
+			{
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam)
+						continue;
+
+					PrintToChat(i, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, sTranslation, sTeamColor, sItemName);
+				}
+			}
+			default:
+			{
+				// CSGO: Requires a character before colors will work, so add a space.
+				PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, sTranslation, sTeamColor, sItemName);
+			}
+		}
 	}
 }
 
@@ -211,15 +270,51 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 		char sItemColor[8];
 		hItemButton.hItem.hConfig.GetColor(sItemColor, sizeof(sItemColor));
 
-		if (strlen(sButtonName) != 0)
-			PrintToChatAll("\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s \x01(\x07%6s%s\x01)", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName, sItemColor, sButtonName);
-		else
-			PrintToChatAll("\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName);
+		switch (g_hCVar_MessageMode.IntValue)
+		{
+			case 2:
+			{
+				int iTeam = GetClientTeam(iClient);
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam || !CheckCommandAccess(i, "", ADMFLAG_BAN))
+						continue;
+
+					if (strlen(sButtonName) != 0)
+						PrintToChat(i, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s \x01(\x07%6s%s\x01)", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName, sItemColor, sButtonName);
+					else
+						PrintToChat(i, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName);
+				}
+			}
+			case 3:
+			{
+				int iTeam = GetClientTeam(iClient);
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam)
+						continue;
+
+					if (strlen(sButtonName) != 0)
+						PrintToChat(i, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s \x01(\x07%6s%s\x01)", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName, sItemColor, sButtonName);
+					else
+						PrintToChat(i, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName);
+				}
+			}
+			default:
+			{
+				if (strlen(sButtonName) != 0)
+					PrintToChatAll("\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s \x01(\x07%6s%s\x01)", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName, sItemColor, sButtonName);
+				else
+					PrintToChatAll("\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName);
+			}
+		}
 	}
 	else
 	{
 		char sTeamColor[8];
-		switch (GetClientTeam(iClient))
+		int iTeam = GetClientTeam(iClient);
+
+		switch (iTeam)
 		{
 			case 2:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x02");
@@ -229,10 +324,42 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x08");
 		}
 
-		// CSGO: Requires a character before colors will work, so add a space.
-		if (strlen(sButtonName) != 0)
-			PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s (%s)", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName, sButtonName);
-		else
-			PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
+		switch (g_hCVar_MessageMode.IntValue)
+		{
+			case 2:
+			{
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam || !CheckCommandAccess(i, "", ADMFLAG_BAN))
+						continue;
+
+					if (strlen(sButtonName) != 0)
+						PrintToChat(i, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s (%s)", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName, sButtonName);
+					else
+						PrintToChat(i, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
+				}
+			}
+			case 3:
+			{
+				for (int i; i <= MaxClients; i++)
+				{
+					if (!IsClientInGame(i) || GetClientTeam(i) != iTeam)
+						continue;
+
+					if (strlen(sButtonName) != 0)
+						PrintToChat(i, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s (%s)", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName, sButtonName);
+					else
+						PrintToChat(i, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
+				}
+			}
+			default:
+			{
+				// CSGO: Requires a character before colors will work, so add a space.
+				if (strlen(sButtonName) != 0)
+					PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s (%s)", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName, sButtonName);
+				else
+					PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
+			}
+		}
 	}
 }
