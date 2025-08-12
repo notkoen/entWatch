@@ -236,8 +236,8 @@ stock bool LoadConfig(bool bLoopEntities = false)
 						hConfigButton.flButtonCooldown = hConfigFile.GetFloat("cooldown");
 						hConfigButton.flItemCooldown   = hConfigFile.GetFloat("itemcooldown");
 
-						hConfigButton.bShowActivate = view_as<bool>(hConfigFile.GetNum("showactivate", 1));
-						hConfigButton.bShowCooldown = view_as<bool>(hConfigFile.GetNum("showcooldown", 1));
+						hConfigButton.bShowActivate = view_as<bool>(hConfigFile.GetNum("showactivate", 0));
+						hConfigButton.bShowCooldown = view_as<bool>(hConfigFile.GetNum("showcooldown", 0));
 
 						hConfig.hButtons.Push(hConfigButton);
 					}
@@ -1133,7 +1133,7 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 		{
 			int iCounterMax = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMax"));
 			int iCounterMin = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_flMin"));
-			int iMaxUses = iCounterMax - iCounterMin;
+			hItemButton.hConfigButton.iMaxUses = iCounterMax - iCounterMin;
 
 			if (hItemButton.hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
 				iNewCurrentUses = RoundFloat(GetEntPropFloat(hItemButton.iButton, Prop_Data, "m_OutValue")) - iCounterMin;
@@ -1148,7 +1148,7 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 
 			hItemButton.iCurrentUses = iNewCurrentUses;
 
-			if (hItemButton.iCurrentUses >= iMaxUses)
+			if (hItemButton.iCurrentUses >= hItemButton.hConfigButton.iMaxUses)
 				hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
 		}
 		case EW_BUTTON_MODE_COUNTERVALUE:
