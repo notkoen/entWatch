@@ -1006,7 +1006,7 @@ stock Action OnButtonOutput(const char[] sOutput, int iButton, int iClient, floa
 stock Action OnCounterOutput(const char[] sOutput, int iButton, int iClient, float flDelay)
 {
 	if (!IsValidEntity(iButton) || !g_hArray_Items.Length)
-		return Plugin_Handled;
+		return Plugin_Continue;
 
 	for (int iItemID; iItemID < g_hArray_Items.Length; iItemID++)
 	{
@@ -1024,7 +1024,7 @@ stock Action OnCounterOutput(const char[] sOutput, int iButton, int iClient, flo
 		}
 	}
 
-	return Plugin_Handled;
+	return Plugin_Continue;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -1096,7 +1096,7 @@ stock Action ProcessButtonPress(int iClient, CItem hItem, CItemButton hItemButto
 stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButton)
 {
 	if (hItem.flReadyTime > g_flGameFrameTime)
-		return Plugin_Handled;
+		return Plugin_Continue;
 
 	int iNewCurrentUses = 0;
 
@@ -1107,7 +1107,7 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 			if (hItemButton.flReadyTime < g_flGameFrameTime)
 				hItemButton.flReadyTime = g_flGameFrameTime + hItemButton.hConfigButton.flButtonCooldown;
 			else
-				return Plugin_Handled;
+				return Plugin_Continue;
 		}
 		case EW_BUTTON_MODE_MAXUSES:
 		{
@@ -1123,7 +1123,7 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 			if (iNewCurrentUses <= hItemButton.iCurrentUses)
 			{
 				hItemButton.iCurrentUses = iNewCurrentUses;
-				return Plugin_Handled;
+				return Plugin_Continue;
 			}
 
 			hItemButton.iCurrentUses = iNewCurrentUses;
@@ -1143,7 +1143,7 @@ stock Action ProcessCounterValue(int iClient, CItem hItem, CItemButton hItemButt
 			if (iNewCurrentUses <= hItemButton.iCurrentUses)
 			{
 				hItemButton.iCurrentUses = iNewCurrentUses;
-				return Plugin_Handled;
+				return Plugin_Continue;
 			}
 
 			hItemButton.iCurrentUses = iNewCurrentUses;
