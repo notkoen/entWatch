@@ -17,6 +17,9 @@
 /* BOOLEANS */
 bool g_bInterfaceHidden[MAXPLAYERS+1];
 
+/* CONVARS */
+ConVar g_hCVar_InterfaceMode;
+
 /* COOKIES */
 Cookie_Stocks g_hCookie_InterfaceHidden;
 
@@ -37,6 +40,8 @@ public Plugin myinfo =
 public void OnPluginStart()
 {
 	LoadTranslations("entWatch.phrases");
+
+	g_hCVar_InterfaceMode = CreateConVar("sm_einterface_mode", "3", "Entwatch interface display mode (1 = All items, 2 = Admin all items/Team items only, 3 = Team items only", FCVAR_NONE, true, 1.0, true, 3.0);
 
 	g_hCookie_InterfaceHidden = new Cookie_Stocks("EW_InterfaceHidden", "", CookieAccess_Private);
 
@@ -265,31 +270,34 @@ stock Action OnDisplayHUD(Handle hTimer)
 
 		int iPagePanel;
 
-		switch (GetClientTeam(iClient))
+		switch (g_hCVar_InterfaceMode.IntValue)
 		{
-			case (2): iPagePanel = 1;
-			case (3): iPagePanel = 2;
+			case 1: iPagePanel = 0;
+			case 2:
+			{
+				if (CheckCommandAccess(iClient, "", ADMFLAG_BAN))
+					iPagePanel = 0;
+				else
+				{
+					switch (GetClientTeam(iClient))
+					{
+						case 2: iPagePanel = 1;
+						case 3: iPagePanel = 2;
+					}
+				}
+			}
+			case 3:
+			{
+				switch (GetClientTeam(iClient))
+				{
+					case 2: iPagePanel = 1;
+					case 3: iPagePanel = 2;
+				}
+			}
 		}
 
 		if (sHUDPages[iPagePanel][iPageCurrent[iPagePanel]][0])
 		{
-			/*
-			if (GetClientMenu(iClient) == MenuSource_None)
-			{
-				/
-				Menu hMenu = new Menu(PanelHandler_HUD);
-				hMenu.ExitButton = true;
-				hMenu.AddItem("", sHUDPages[iPagePanel][iPageCurrent[iPagePanel]]);
-				hMenu.Display(iClient, MENU_TIME_FOREVER);
-				*
-
-				/
-				Panel hPanel = new Panel();
-				hPanel.DrawText(sHUDPages[iPagePanel][iPageCurrent[iPagePanel]]);
-				hPanel.Send(iClient, PanelHandler_HUD, MENU_TIME_FOREVER);
-				*
-			}
-			*/
 
 			Handle hMessage = StartMessageOne("KeyHintText", iClient);
 
@@ -309,42 +317,3 @@ stock Action OnDisplayHUD(Handle hTimer)
 
 	return Plugin_Continue;
 }
-
-public void PanelHandler_HUD(Menu menu, MenuAction action, int param1, int param2)
-{
-	switch (action)
-	{
-		case MenuAction_Select:
-		{
-			// param1 = client
-			// param2 = key pressed
-
-			PrintToChatAll("MenuAction_Select: %N -> %d", param1, param2);
-		}
-		case MenuAction_Cancel:
-		{
-			switch (param2)
-			{
-				case MenuCancel_Interrupted:
-				{
-				}
-				default:
-				{
-					PrintToChatAll("MenuAction_Cancel: %N -> %d", param1, param2);
-				}
-			}
-		}
-	}
-}
-
-/*
-enum
-{
-	MenuCancel_Disconnected = -1,   < Client dropped from the server /
-	MenuCancel_Interrupted = -2,    < Client was interrupted with another menu /
-	MenuCancel_Exit = -3,           < Client exited via "exit" /
-	MenuCancel_NoDisplay = -4,      < Menu could not be displayed to the client /
-	MenuCancel_Timeout = -5,        < Menu timed out /
-	MenuCancel_ExitBack = -6        < Client selected "exit back" on a paginated menu /
-};
-*/

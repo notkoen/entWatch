@@ -13,18 +13,39 @@
 #include <sourcemod>
 #include <entWatch_core>
 
-/* CONVARS *//*
-ConVar g_hCVar_UseHEXColors = null;
+/* CONVARS */
+ConVar g_hCVar_UseHEXColors;
+ConVar g_hCVar_ColorConfig;
+ConVar g_hCVar_MessageMode;
 
-ConVar g_hCVar_Color_Tag = null;
-ConVar g_hCVar_Color_Names = null;
-ConVar g_hCVar_Color_AuthID = null;
-ConVar g_hCVar_Color_Activate = null;
-ConVar g_hCVar_Color_Pickup = null;
-ConVar g_hCVar_Color_Drop = null;
-ConVar g_hCVar_Color_Death = null;
-ConVar g_hCVar_Color_Disconnect = null;
-ConVar g_hCVar_Color_Warning = null;*/
+/* STRUCTS */
+enum struct ColorStruct
+{
+	char sTag[8];        // String: Hex color of entwatch tag
+	char sName[8];       // String: Hex color of player name
+	char sAuthID[8];     // String: Hex color of player steam ID
+	char sActivate[8];   // String: Hex color of item use message
+	char sPickup[8];     // String: Hex color of item pickup message
+	char sDrop[8];       // String: Hex color of item drop message
+	char sDeath[8];      // String: Hex color of player death message
+	char sDisconnect[8]; // String: Hex color of player disconnect message
+	char sWarning[8];    // String: Hex color of warning message
+
+	void Reset()
+	{
+		this.sTag        = "E11E64";
+		this.sName       = "F0F0F0";
+		this.sAuthID     = "B4B4B4";
+		this.sActivate   = "64AFE1";
+		this.sPickup     = "AFE164";
+		this.sDrop       = "E164AF";
+		this.sDeath      = "E1AF64";
+		this.sDisconnect = "E1AF64";
+		this.sWarning    = "E1AF64";
+	}
+}
+
+ColorStruct g_colorStruct;
 
 //----------------------------------------------------------------------------------------------------
 // Purpose:
@@ -43,20 +64,55 @@ public Plugin myinfo =
 public void OnPluginStart()
 {
 	LoadTranslations("entWatch.phrases");
-/*
-	g_hCVar_UseHEXColors = CreateConVar("sm_emessages_usehex", "1", "Allow HEX color codes to be used.", FCVAR_NONE, true, 0.0, true, 1.0);
 
-	g_hCVar_Color_Tag        = CreateConVar("sm_emessage_color_tag",        "E11E64", "The HEX color code for the tags.",                FCVAR_NONE);
-	g_hCVar_Color_Names      = CreateConVar("sm_emessage_color_names",      "F0F0F0", "The HEX color code for names.",                   FCVAR_NONE);
-	g_hCVar_Color_AuthID     = CreateConVar("sm_emessage_color_authid",     "B4B4B4", "The HEX color code for the authids.",             FCVAR_NONE);
-	g_hCVar_Color_Activate   = CreateConVar("sm_emessage_color_activate",   "64AFE1", "The HEX color code for the activation messages.", FCVAR_NONE);
-	g_hCVar_Color_Pickup     = CreateConVar("sm_emessage_color_pickup",     "AFE164", "The HEX color code for the pickup messages.",     FCVAR_NONE);
-	g_hCVar_Color_Drop       = CreateConVar("sm_emessage_color_drop",       "E164AF", "The HEX color code for the drop messages.",       FCVAR_NONE);
-	g_hCVar_Color_Death      = CreateConVar("sm_emessage_color_death",      "E1AF64", "The HEX color code for the death messages.",      FCVAR_NONE);
-	g_hCVar_Color_Disconnect = CreateConVar("sm_emessage_color_disconnect", "E1AF64", "The HEX color code for the disconnect messages.", FCVAR_NONE);
-	g_hCVar_Color_Warning    = CreateConVar("sm_emessage_color_warning",    "E16464", "The HEX color code for the warning messages.",    FCVAR_NONE);
+	g_hCVar_MessageMode  = CreateConVar("sm_emessages_mode",   "1",       "Entwatch message recipient mode (1 = All, 2 = Team Only + Admin, 3 = Team Only)", FCVAR_NONE, true, 1.0, true, 3.0);
+	g_hCVar_UseHEXColors = CreateConVar("sm_emessages_usehex", "1",       "Allow HEX color codes to be used.", FCVAR_NONE, true, 0.0, true, 1.0);
+	g_hCVar_ColorConfig  = CreateConVar("sm_emessages_config", "classic", "Name of entWatch-message color config file");
+	g_hCVar_ColorConfig.AddChangeHook(OnConVarChange);
 
-	AutoExecConfig();*/
+	LoadColors();
+	AutoExecConfig();
+}
+
+//----------------------------------------------------------------------------------------------------
+// Purpose:
+//----------------------------------------------------------------------------------------------------
+public void OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue)
+{
+	if (convar == g_hCVar_ColorConfig)
+		LoadColors();
+}
+
+//----------------------------------------------------------------------------------------------------
+// Purpose:
+//----------------------------------------------------------------------------------------------------
+stock void LoadColors()
+{
+	g_colorStruct.Reset();
+
+	char sConfig[32], sFilePath[PLATFORM_MAX_PATH];
+	g_hCVar_ColorConfig.GetString(sConfig, sizeof(sConfig));
+	BuildPath(Path_SM, sFilePath, sizeof(sFilePath), "configs/entwatch/colors/%s.cfg", sConfig);
+
+	KeyValues kv = new KeyValues("colors");
+	if (!kv.ImportFromFile(sFilePath))
+	{
+		delete kv;
+		LogError("[entWatch-messages] Failed to load color config. Falling back on default colors.");
+		return;
+	}
+
+	kv.GetString("color_tag",        g_colorStruct.sTag,        sizeof(g_colorStruct.sTag),        g_colorStruct.sTag);
+	kv.GetString("color_name",       g_colorStruct.sName,       sizeof(g_colorStruct.sName),       g_colorStruct.sName);
+	kv.GetString("color_steamid",    g_colorStruct.sAuthID,     sizeof(g_colorStruct.sAuthID),     g_colorStruct.sAuthID);
+	kv.GetString("color_use",        g_colorStruct.sActivate,   sizeof(g_colorStruct.sActivate),   g_colorStruct.sActivate);
+	kv.GetString("color_pickup",     g_colorStruct.sPickup,     sizeof(g_colorStruct.sPickup),     g_colorStruct.sPickup);
+	kv.GetString("color_drop",       g_colorStruct.sDrop,       sizeof(g_colorStruct.sDrop),       g_colorStruct.sDrop);
+	kv.GetString("color_death",      g_colorStruct.sDeath,      sizeof(g_colorStruct.sDeath),      g_colorStruct.sDeath);
+	kv.GetString("color_disconnect", g_colorStruct.sDisconnect, sizeof(g_colorStruct.sDisconnect), g_colorStruct.sDisconnect);
+	kv.GetString("color_warning",    g_colorStruct.sWarning,    sizeof(g_colorStruct.sWarning),    g_colorStruct.sWarning);
+
+	delete kv;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -75,41 +131,53 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 	char sClientAuth[32];
 	GetClientAuthId(iClient, AuthId_Steam2, sClientAuth, sizeof(sClientAuth));
 
-	char sTranslation[32];
+	char sTranslation[32], sColor[8];
 	switch (iInteractionType)
 	{
 		case EW_WEAPON_INTERACTION_DROP:
+		{
 			Format(sTranslation, sizeof(sTranslation), "Item Drop");
-
+			Format(sColor, sizeof(sColor), g_colorStruct.sDrop);
+		}
 		case EW_WEAPON_INTERACTION_DEATH:
+		{
 			Format(sTranslation, sizeof(sTranslation), "Item Death");
-
+			Format(sColor, sizeof(sColor), g_colorStruct.sDeath);
+		}
 		case EW_WEAPON_INTERACTION_PICKUP:
+		{
 			Format(sTranslation, sizeof(sTranslation), "Item Pickup");
-
+			Format(sColor, sizeof(sColor), g_colorStruct.sPickup);
+		}
 		case EW_WEAPON_INTERACTION_DISCONNECT:
+		{
 			Format(sTranslation, sizeof(sTranslation), "Item Disconnect");
+			Format(sColor, sizeof(sColor), g_colorStruct.sDisconnect);
+		}
 	}
 
 	char sItemName[32];
 	hItem.hConfig.GetName(sItemName, sizeof(sItemName));
 
-	if (IsSource2009())
+	if (g_hCVar_UseHEXColors.BoolValue)
 	{
 		char sItemColor[8];
 		hItem.hConfig.GetColor(sItemColor, sizeof(sItemColor));
 
-		PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s", sClientName, sClientAuth, sTranslation, sItemColor, sItemName);
+		PrintChatMessage(iClient, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, sColor, sTranslation, sItemColor, sItemName);
 	}
 	else
 	{
-		//CSGO Colors.
-		//x02 = Zombies
-		//x08 = Neutral
-		//x0C = Humans
+		// CSGO Colors.
+		// x02 = Zombies
+		// x08 = Neutral
+		// x0C = Humans
+		// CSGO: Requires a character before colors will work, so add a space.
 
 		char sTeamColor[8];
-		switch (GetClientTeam(iClient))
+		int iTeam = GetClientTeam(iClient);
+
+		switch (iTeam)
 		{
 			case 2:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x02");
@@ -119,8 +187,7 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x08");
 		}
 
-		// CSGO: Requires a character before colors will work, so add a space.
-		PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, sTranslation, sTeamColor, sItemName);
+		PrintChatMessage(iClient, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, sTranslation, sTeamColor, sItemName);
 	}
 }
 
@@ -144,20 +211,22 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 	hItemButton.hItem.hConfig.GetName(sItemName, sizeof(sItemName));
 	hItemButton.hConfigButton.GetName(sButtonName, sizeof(sButtonName));
 
-	if (IsSource2009())
+	if (g_hCVar_UseHEXColors.BoolValue)
 	{
 		char sItemColor[8];
 		hItemButton.hItem.hConfig.GetColor(sItemColor, sizeof(sItemColor));
 
 		if (strlen(sButtonName) != 0)
-			PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s (%s)", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName, sButtonName);
+			PrintChatMessage(iClient, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s \x01(\x07%6s%s\x01)", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName, sItemColor, sButtonName);
 		else
-			PrintToChatAll("\x04[entWatch] \x01%s (\x05%s\x01) %t \x07%6s%s", sClientName, sClientAuth, "Item Activate", sItemColor, sItemName);
+			PrintChatMessage(iClient, "\x07%6s[entWatch] \x07%6s%s \x01(\x07%6s%s\x01) \x07%6s%t \x07%6s%s", g_colorStruct.sTag, g_colorStruct.sName, sClientName, g_colorStruct.sAuthID, sClientAuth, g_colorStruct.sActivate, "Item Activate", sItemColor, sItemName);
 	}
 	else
 	{
 		char sTeamColor[8];
-		switch (GetClientTeam(iClient))
+		int iTeam = GetClientTeam(iClient);
+
+		switch (iTeam)
 		{
 			case 2:
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x02");
@@ -167,27 +236,47 @@ public void EW_OnClientItemButtonInteract(int iClient, CItemButton hItemButton)
 				strcopy(sTeamColor, sizeof(sTeamColor), "\x08");
 		}
 
-		// CSGO: Requires a character before colors will work, so add a space.
 		if (strlen(sButtonName) != 0)
-			PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s (%s)", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName, sButtonName);
+			PrintChatMessage(iClient, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s (%s)", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName, sButtonName);
 		else
-			PrintToChatAll(" \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
+			PrintChatMessage(iClient, " \x04[entWatch] \x01%s (\x05%s\x01) %t %s%s", sClientName, sClientAuth, "Item Activate", sTeamColor, sItemName);
 	}
 }
 
 //----------------------------------------------------------------------------------------------------
 // Purpose:
 //----------------------------------------------------------------------------------------------------
-stock bool IsSource2009()
+stock void PrintChatMessage(int iClient, const char[] sMessage, any ...)
 {
-	static bool bHasChecked = false;
-	static bool bIsSource2009 = false;
+	char sBuffer[255];
+	VFormat(sBuffer, sizeof(sBuffer), sMessage, 3);
 
-	if (!bHasChecked)
+	int iTeam = GetClientTeam(iClient);
+
+	switch (g_hCVar_MessageMode.IntValue)
 	{
-		bHasChecked = true;
-		bIsSource2009 = (GetEngineVersion() == Engine_CSS || GetEngineVersion() == Engine_HL2DM || GetEngineVersion() == Engine_DODS || GetEngineVersion() == Engine_TF2);
-	}
+		case 2:
+		{
+			for (int i; i <= MaxClients; i++)
+			{
+				if (!IsClientInGame(i))
+					continue;
 
-	return bIsSource2009;
+				if (GetClientTeam(i) == iTeam || CheckCommandAccess(i, "", ADMFLAG_GENERIC))
+					PrintToChat(i, sBuffer);
+			}
+		}
+		case 3:
+		{
+			for (int i; i <= MaxClients; i++)
+			{
+				if (!IsClientInGame(i))
+					continue;
+
+				if (GetClientTeam(i) == iTeam)
+					PrintToChat(i, sBuffer);
+			}
+		}
+		default: PrintToChatAll(sBuffer);
+	}
 }
