@@ -77,5 +77,5 @@ public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInterac
 		return;
 
 	if (0 <= SDKCall(SDKCall_GetSlot, hItem.iWeapon) < 2)
-		SDKHooks_DropWeapon(iClient, hItem.iWeapon, NULL_VECTOR, NULL_VECTOR, false); // Using this causes ammo to disapear on the weapon
+		SDKHooks_DropWeapon(iClient, hItem.iWeapon, NULL_VECTOR, NULL_VECTOR); // Using this causes ammo to disapear on the weapon
 }
