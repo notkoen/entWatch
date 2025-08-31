@@ -449,7 +449,7 @@ stock void OnEntitySpawnPost(int iEntity)
 
 				if (hItem.hConfig != hConfig)
 					continue;
-				
+
 				if (!RegisterItemWeapon(hItem, iEntity))
 					continue;
 
@@ -462,7 +462,10 @@ stock void OnEntitySpawnPost(int iEntity)
 				CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
 
 				if (!RegisterItemWeapon(hItem, iEntity))
+				{
 					delete hItem;
+					continue;
+				}
 
 				InsertItemSorted(g_hArray_Items, hItem);
 				break;
@@ -497,7 +500,10 @@ stock void OnEntitySpawnPost(int iEntity)
 				CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
 
 				if (!RegisterItemButton(hConfigButton, hItem, iEntity))
+				{
 					delete hItem;
+					continue;
+				}
 
 				InsertItemSorted(g_hArray_Items, hItem);
 				break;
@@ -517,26 +523,28 @@ stock void OnEntitySpawnPost(int iEntity)
 			{
 				CItem hItem = g_hArray_Items.Get(iItemID);
 
-				if (hItem.hConfig == hConfig)
-				{
-					if (RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
-					{
-						bRegistered = true;
-						break;
-					}
-				}
+				if (hItem.hConfig != hConfig)
+					continue;
+
+				if (!RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
+					continue;
+
+				bRegistered = true;
+				break;
 			}
 
 			if (!bRegistered)
 			{
 				CItem hItem = new CItem(hConfig, g_hArray_Items.Length);
 
-				if (RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
+				if (!RegisterItemTrigger(hConfigTrigger, hItem, iEntity))
 				{
-					InsertItemSorted(g_hArray_Items, hItem);
-					break;
+					delete hItem;
+					continue;
 				}
-				else delete hItem;
+
+				InsertItemSorted(g_hArray_Items, hItem);
+				break;
 			}
 		}
 	}
