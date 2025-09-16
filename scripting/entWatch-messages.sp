@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Messages
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen
 // Description: Handle the chat messages of [entWatch]
 //
 //====================================================================================================
@@ -53,7 +53,7 @@ ColorStruct g_colorStruct;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Messages",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen",
 	description  = "Handle the chat messages of [entWatch]",
 	version      = EW_VERSION
 };

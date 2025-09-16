@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Interface
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen
 // Description: Handle the interface of [entWatch]
 //
 //====================================================================================================
@@ -29,7 +29,7 @@ Cookie_Stocks g_hCookie_InterfaceHidden;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Interface",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen",
 	description  = "Handle the interface of [entWatch]",
 	version      = EW_VERSION
 };

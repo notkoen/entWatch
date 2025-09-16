@@ -25,7 +25,7 @@ Handle SDKCall_BumpWeapon;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Tools",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen",
 	description  = "Handle the tools of [entWatch]",
 	version      = EW_VERSION
 };

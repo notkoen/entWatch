@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Debug
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen
 // Description: Handle the debug functions of [entWatch]
 //
 //====================================================================================================
@@ -25,7 +25,7 @@ int g_iHaloSprite = -1;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Debug",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen",
 	description  = "Handle the debug functions of [entWatch]",
 	version      = EW_VERSION
 };

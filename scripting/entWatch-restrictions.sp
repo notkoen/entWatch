@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Restrictions
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen, Rushaway
 // Description: Handle the restrictions of [entWatch]
 //
 //====================================================================================================
@@ -118,7 +118,7 @@ GlobalForward g_hFwd_OnClientUnrestricted;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Restrictions",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen, Rushaway",
 	description  = "Handle the restrictions of [entWatch]",
 	version      = EW_VERSION
 };

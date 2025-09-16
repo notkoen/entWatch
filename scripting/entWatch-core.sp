@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Core
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen, tilgep
 // Description: Handle the core functions of [entWatch]
 //
 //====================================================================================================
@@ -42,7 +42,7 @@ GlobalForward g_hFwd_OnClientItemTriggerCanInteract;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Core",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen, tilgep",
 	description  = "Handle the core functions of [entWatch]",
 	version      = EW_VERSION
 };

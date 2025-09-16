@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Forcedrop
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen
 // Description: Handle the forced dropping of weapons of [entWatch]
 //
 //====================================================================================================
@@ -23,7 +23,7 @@ Handle SDKCall_GetSlot;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Forcedrop",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen",
 	description  = "Handle the forced dropping of weapons for [entWatch]",
 	version      = EW_VERSION
 };

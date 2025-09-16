@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Beacon
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen
 // Description: Handle the beacons of [entWatch]
 //
 //====================================================================================================
@@ -29,7 +29,7 @@ ConVar g_hCVar_EnableDroppedBeacon = null;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Beacons",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen",
 	description  = "Handle the beacons of [entWatch]",
 	version      = EW_VERSION
 };
