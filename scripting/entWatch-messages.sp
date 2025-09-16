@@ -79,8 +79,7 @@ public void OnPluginStart()
 //----------------------------------------------------------------------------------------------------
 public void OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue)
 {
-	if (convar == g_hCVar_ColorConfig)
-		LoadColors();
+	LoadColors();
 }
 
 //----------------------------------------------------------------------------------------------------
