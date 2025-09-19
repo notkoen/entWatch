@@ -1,7 +1,7 @@
 //====================================================================================================
 //
 // Name: [entWatch] Core
-// Author: zaCade & Prometheum
+// Author: zaCade, Prometheum, koen, tilgep
 // Description: Handle the core functions of [entWatch]
 //
 //====================================================================================================
@@ -42,7 +42,7 @@ GlobalForward g_hFwd_OnClientItemTriggerCanInteract;
 public Plugin myinfo =
 {
 	name         = "[entWatch] Core",
-	author       = "zaCade & Prometheum",
+	author       = "zaCade, Prometheum, koen, tilgep",
 	description  = "Handle the core functions of [entWatch]",
 	version      = EW_VERSION
 };
@@ -646,9 +646,9 @@ stock bool RegisterItemButton(CConfigButton hConfigButton, CItem hItem, int iBut
 		else
 		{
 			if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERDOWN)
-				hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMax")) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue"));
+				hItemButton.iCurrentUses = iCounterMax - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue"));
 			else if (hConfigButton.iType == EW_BUTTON_TYPE_COUNTERUP)
-				hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue")) - RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_flMin"));
+				hItemButton.iCurrentUses = RoundFloat(GetEntPropFloat(iButton, Prop_Data, "m_OutValue")) - iCounterMin;
 		}
 	}
 
