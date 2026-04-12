@@ -5,8 +5,7 @@
 // Description: Handle the restrictions of [entWatch]
 //
 //====================================================================================================
-// Requires Sourcemod Version: 1.10.0.6531 or above
-//====================================================================================================
+
 #pragma semicolon 1
 #pragma newdecls required
 
@@ -15,10 +14,6 @@
 #include <sdktools>
 #include <entWatch_core>
 
-/* TODO:
-- Load balancer support based on players online (check on connect or after a timer of x seconds)
- */
-
 #define EW_DB_NAME             "EntWatch4"
 #define EW_DB_CHARSET          "utf8mb4"
 #define EW_DB_COLLATION        "utf8mb4_unicode_ci"
@@ -26,7 +21,9 @@
 #define EW_CONSOLE_NAME        "Console"
 #define EW_SERVER_STEAMID      "SERVER"
 
-ClientSettings_Restrict g_RestrictClients[MAXPLAYERS+1];
+//----------------------------------------------------------------------------------------------------
+// Structs
+//----------------------------------------------------------------------------------------------------
 enum struct ClientSettings_Restrict
 {
 	bool bVerified;
@@ -35,7 +32,8 @@ enum struct ClientSettings_Restrict
 	char szAdminSteamID[64];
 	char szReason[64];
 	int  iDuration;
-	int  iTimeStamp;
+	int  iIssuedAt;
+	int  iExpiresAt;
 	int  intTotalEbans;
 
 	void Reset()
@@ -46,7 +44,8 @@ enum struct ClientSettings_Restrict
 		this.szAdminSteamID[0] = '\0';
 		this.szReason[0]       = '\0';
 		this.iDuration         = 0;
-		this.iTimeStamp        = 0;
+		this.iIssuedAt         = 0;
+		this.iExpiresAt        = 0;
 		this.intTotalEbans     = 0;
 	}
 }
@@ -57,12 +56,16 @@ enum struct OfflinePlayerData
 	char szPlayerSteamID[64];
 	char szLastItem[32];
 	int  iUserID;
-	int  iTimeStamp;
-	int  iTimeStampStart;
+	int  iTrackedUntil;
+	int  iDisconnectedAt;
 }
 
-ArrayList g_OfflineArray;
-OfflinePlayerData g_aMenuBuffer[MAXPLAYERS+1];
+//----------------------------------------------------------------------------------------------------
+// Globals
+//----------------------------------------------------------------------------------------------------
+ClientSettings_Restrict g_RestrictClients[MAXPLAYERS+1];
+ArrayList               g_OfflineArray;
+OfflinePlayerData       g_aMenuBuffer[MAXPLAYERS+1];
 
 /* CVARS */
 ConVar g_hCVar_UseReasonMenu;
@@ -78,19 +81,19 @@ ConVar g_hCVar_OfflineClearRecords;
 ConVar g_hCVar_Admin_OfflineLong;
 
 bool g_bLate = false;
-bool g_bUseReasonMenu;
-bool g_bCleanedUpTempBans;
-bool g_bEbanInvalidSteamID;
-bool g_bDetailedStatus;
-bool g_bDropItemOnEBan;
+bool g_bUseReasonMenu = false;
+bool g_bEbanInvalidSteamID = true;
+bool g_bDetailedStatus = false;
+bool g_bDropItemOnEBan = true;
+bool g_bCleanedUpOnMapStart = false;
 char g_sDefaultBanReason[64];
 char g_sDefaultUnbanReason[64];
-int g_iDefaultBanTime = 0;
-int g_iAdminBanLong = 720;
-int g_iMaxBanTime = 0;
-int g_iOfflineTimeClear = 30;
-int g_iOfflineTimeLong = 720;
-int g_iCleanupRetryAttempts = 0;
+int  g_iDefaultBanTime = 0;
+int  g_iAdminBanLong = 720;
+int  g_iMaxBanTime = 0;
+int  g_iOfflineTimeClear = 30;
+int  g_iOfflineTimeLong = 720;
+int  g_iCleanupRetryAttempts = 0;
 
 /* DATABASE */
 enum EbanDBState
@@ -100,31 +103,33 @@ enum EbanDBState
 	EbanDB_Connected,
 	EbanDB_Wait
 };
-EbanDBState g_eRestrictDBState = EbanDB_Disconnected;
-
-Database g_hRestrictDB = null;
-bool g_bIsSQLite = false;
-int g_iRestrictConnectLock = 0;
-int g_iRestrictSequence = 0;
-float g_fRestrictRetryTime = 15.0;
+EbanDBState g_eDBState = EbanDB_Disconnected;
+Database    g_hDB = null;
+bool        g_bIsSQLite = false;
+int         g_iConnectLock = 0;
+int         g_iConnectSequence = 0;
+float       g_fRetryTime = 15.0;
 
 /* FORWARDS */
 GlobalForward g_hFwd_OnClientRestricted;
 GlobalForward g_hFwd_OnClientUnrestricted;
+GlobalForward g_hFwd_OnRestrictBroadcast;
+GlobalForward g_hFwd_OnUnrestrictBroadcast;
+GlobalForward g_hFwd_OnOfflineRestrictBroadcast;
 
 //----------------------------------------------------------------------------------------------------
-// Purpose:
+// Purpose: Plugin info
 //----------------------------------------------------------------------------------------------------
 public Plugin myinfo =
 {
-	name         = "[entWatch] Restrictions",
-	author       = "zaCade, Prometheum, koen, Rushaway",
-	description  = "Handle the restrictions of [entWatch]",
-	version      = EW_VERSION
+	name        = "[entWatch] Restrictions",
+	author      = "zaCade, Prometheum, koen, Rushaway",
+	description = "Handle the restrictions of [entWatch]",
+	version     = EW_VERSION
 };
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Register native functions and plugin library
+// Purpose: Register natives and library
 //----------------------------------------------------------------------------------------------------
 public APLRes AskPluginLoad2(Handle hMyself, bool bLate, char[] sError, int errorSize)
 {
@@ -133,6 +138,8 @@ public APLRes AskPluginLoad2(Handle hMyself, bool bLate, char[] sError, int erro
 	CreateNative("EW_IsRestrictedClient", Native_IsRestrictedClient);
 	CreateNative("EW_GetClientBanCount",  Native_GetClientBanCount);
 	CreateNative("EW_GetClientBanInfo",   Native_GetClientBanInfo);
+	CreateNative("EW_ShowBanReasonMenu",   Native_ShowBanReasonMenu);
+	CreateNative("EW_ShowUnbanReasonMenu", Native_ShowUnbanReasonMenu);
 
 	RegPluginLibrary("entWatch-restrictions");
 	g_bLate = bLate;
@@ -140,34 +147,32 @@ public APLRes AskPluginLoad2(Handle hMyself, bool bLate, char[] sError, int erro
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Initialize plugin, load translations, setup database and commands
+// Purpose: Initialize plugin, setup database and commands
 //----------------------------------------------------------------------------------------------------
 public void OnPluginStart()
 {
-	LoadTranslations("common.phrases");
-	LoadTranslations("entWatch.phrases");
-
 	if (SQL_CheckConfig(EW_DB_NAME))
 		Database_Connect();
 	else
 		SetFailState("Could not find \"%s\" entry in databases.cfg.", EW_DB_NAME);
 
-	g_hFwd_OnClientRestricted   = new GlobalForward("EW_OnClientRestricted",   ET_Ignore, Param_Cell, Param_Cell, Param_Cell, Param_String);
-	g_hFwd_OnClientUnrestricted = new GlobalForward("EW_OnClientUnrestricted", ET_Ignore, Param_Cell, Param_Cell, Param_String);
+	g_hFwd_OnClientRestricted         = new GlobalForward("EW_OnClientRestricted",         ET_Ignore, Param_Cell, Param_Cell, Param_Cell, Param_String);
+	g_hFwd_OnClientUnrestricted       = new GlobalForward("EW_OnClientUnrestricted",       ET_Ignore, Param_Cell, Param_Cell, Param_String);
+	g_hFwd_OnRestrictBroadcast        = new GlobalForward("EW_OnRestrictBroadcast",        ET_Ignore, Param_Cell, Param_Cell, Param_Cell, Param_String, Param_String, Param_String);
+	g_hFwd_OnUnrestrictBroadcast      = new GlobalForward("EW_OnUnrestrictBroadcast",      ET_Ignore, Param_Cell, Param_Cell, Param_String, Param_String, Param_String);
+	g_hFwd_OnOfflineRestrictBroadcast = new GlobalForward("EW_OnOfflineRestrictBroadcast", ET_Ignore, Param_Cell, Param_Cell, Param_String, Param_String, Param_String, Param_String);
 
-	g_hCVar_UseReasonMenu       = CreateConVar("sm_eban_use_reason_menu",      "0",                     "Use menu to choose reason when missing", _, true, 0.0, true, 1.0);
-	g_hCVar_DefaultBanReason    = CreateConVar("sm_eban_default_reason",       "Item misuse",           "Default eban reason (max 64 chars)");
-	g_hCVar_DefaultUnbanReason  = CreateConVar("sm_eban_default_unban_reason", "Giving another chance", "Default e-unban reason (max 64 chars)");
-	g_hCVar_DefaultBanTime      = CreateConVar("sm_eban_default_time",         "0",                     "Default eban time in minutes (-1 = session, 0 = permanent)", _, true, -1.0, true, 43200.0);
-	g_hCVar_AdminBanLong        = CreateConVar("sm_eban_admin_max_minutes",    "720",                   "Max eban duration for non-root admins", _, true, 1.0);
-	g_hCVar_EbanInvalidSteamID  = CreateConVar("sm_eban_invalid_steamid_temp", "1",                     "Temporarily eban clients with invalid SteamID", _, true, 0.0, true, 1.0);
-	g_hCVar_MaxBanTime          = CreateConVar("sm_eban_max_minutes_cmd",      "0",                     "Max minutes allowed via console command (0 = disabled)", _, true, 0.0);
-	g_hCVar_DetailedStatus      = CreateConVar("sm_eban_status_detailed",      "0",                     "Show detailed status in sm_status", _, true, 0.0, true, 1.0);
-	g_hCVar_DropOnEBan          = CreateConVar("sm_eban_drop_items",           "1",                     "Drop entWatch items on eban", _, true, 0.0, true, 1.0);
-
-	// Offline eban ConVars
-	g_hCVar_OfflineClearRecords = CreateConVar("sm_eban_offline_cache_minutes",     "30",  "Keep disconnected players tracked for X minutes (1-240)", _, true, 1.0, true, 240.0);
-	g_hCVar_Admin_OfflineLong   = CreateConVar("sm_eban_offline_admin_max_minutes", "720", "Max minutes non-root admins can offline eban", _, true, 1.0);
+	g_hCVar_UseReasonMenu       = CreateConVar("sm_eban_use_reason_menu",           "0",                     "Use menu to choose reason when missing",                       _, true, 0.0, true, 1.0);
+	g_hCVar_DefaultBanReason    = CreateConVar("sm_eban_default_reason",            "Item misuse",           "Default eban reason (max 64 chars)");
+	g_hCVar_DefaultUnbanReason  = CreateConVar("sm_eban_default_unban_reason",      "Giving another chance", "Default e-unban reason (max 64 chars)");
+	g_hCVar_DefaultBanTime      = CreateConVar("sm_eban_default_time",              "0",                     "Default eban time in minutes (-1=session, 0=permanent)",       _, true, -1.0, true, 43200.0);
+	g_hCVar_AdminBanLong        = CreateConVar("sm_eban_admin_max_minutes",         "720",                   "Max eban duration (minutes) for non-root admins",              _, true, 1.0);
+	g_hCVar_EbanInvalidSteamID  = CreateConVar("sm_eban_invalid_steamid_temp",      "1",                     "Temporarily eban clients with invalid SteamID",               _, true, 0.0, true, 1.0);
+	g_hCVar_MaxBanTime          = CreateConVar("sm_eban_max_minutes_cmd",           "0",                     "Max minutes via console command (0=disabled)",                _, true, 0.0);
+	g_hCVar_DetailedStatus      = CreateConVar("sm_eban_status_detailed",           "0",                     "Show detailed status in sm_status",                           _, true, 0.0, true, 1.0);
+	g_hCVar_DropOnEBan          = CreateConVar("sm_eban_drop_items",                "1",                     "Drop entWatch items on eban",                                 _, true, 0.0, true, 1.0);
+	g_hCVar_OfflineClearRecords = CreateConVar("sm_eban_offline_cache_minutes",     "30",                    "Track disconnected players for X minutes (1-240)",            _, true, 1.0, true, 240.0);
+	g_hCVar_Admin_OfflineLong   = CreateConVar("sm_eban_offline_admin_max_minutes", "720",                   "Max minutes non-root admins can offline eban",                _, true, 1.0);
 
 	g_hCVar_UseReasonMenu.AddChangeHook(OnCvarChanged);
 	g_hCVar_DefaultBanReason.AddChangeHook(OnCvarChanged);
@@ -181,59 +186,46 @@ public void OnPluginStart()
 	g_hCVar_OfflineClearRecords.AddChangeHook(OnCvarChanged);
 	g_hCVar_Admin_OfflineLong.AddChangeHook(OnCvarChanged);
 
-	// Cache values
-	g_bUseReasonMenu = g_hCVar_UseReasonMenu.BoolValue;
-	g_iDefaultBanTime = g_hCVar_DefaultBanTime.IntValue;
-	g_iAdminBanLong = g_hCVar_AdminBanLong.IntValue;
+	g_bUseReasonMenu      = g_hCVar_UseReasonMenu.BoolValue;
+	g_iDefaultBanTime     = g_hCVar_DefaultBanTime.IntValue;
+	g_iAdminBanLong       = g_hCVar_AdminBanLong.IntValue;
 	g_bEbanInvalidSteamID = g_hCVar_EbanInvalidSteamID.BoolValue;
-	g_iMaxBanTime = g_hCVar_MaxBanTime.IntValue;
-	g_bDetailedStatus = g_hCVar_DetailedStatus.BoolValue;
-	g_bDropItemOnEBan = g_hCVar_DropOnEBan.BoolValue;
+	g_iMaxBanTime         = g_hCVar_MaxBanTime.IntValue;
+	g_bDetailedStatus     = g_hCVar_DetailedStatus.BoolValue;
+	g_bDropItemOnEBan     = g_hCVar_DropOnEBan.BoolValue;
 	g_hCVar_DefaultBanReason.GetString(g_sDefaultBanReason, sizeof(g_sDefaultBanReason));
 	g_hCVar_DefaultUnbanReason.GetString(g_sDefaultUnbanReason, sizeof(g_sDefaultUnbanReason));
-	g_iOfflineTimeClear = g_hCVar_OfflineClearRecords.IntValue;
-	g_iOfflineTimeLong = g_hCVar_Admin_OfflineLong.IntValue;
+	g_iOfflineTimeClear   = g_hCVar_OfflineClearRecords.IntValue;
+	g_iOfflineTimeLong    = g_hCVar_Admin_OfflineLong.IntValue;
 
-	RegAdminCmd("sm_eban",   Command_ClientRestrict,   ADMFLAG_BAN);
-	RegAdminCmd("sm_eunban", Command_ClientUnrestrict, ADMFLAG_UNBAN);
+	RegAdminCmd("sm_eban",   Command_ClientRestrict,        ADMFLAG_BAN);
+	RegAdminCmd("sm_eunban", Command_ClientUnrestrict,      ADMFLAG_UNBAN);
 	RegAdminCmd("sm_eoban",  Command_ClientOfflineRestrict, ADMFLAG_BAN);
 
 	RegConsoleCmd("sm_restrictions", Command_DisplayRestrictions);
 	RegConsoleCmd("sm_status",       Command_DisplayStatus);
 
-	// Ensure periodic refresh running
-	CreateTimer(30.0, Timer_Restrict_Refresh, _, TIMER_REPEAT);
+	CreateTimer(30.0, Timer_Refresh,             _, TIMER_REPEAT);
+	CreateTimer(60.0, Timer_OfflineEban_Cleanup, _, TIMER_REPEAT);
 
-	// Initialize offline eban system
 	if (g_OfflineArray == null)
 		g_OfflineArray = new ArrayList(sizeof(OfflinePlayerData));
 
-	// Create offline eban cleanup timer
-	CreateTimer(60.0, Timer_OfflineEban_Cleanup, _, TIMER_REPEAT);
-
-	// Late load
 	if (!g_bLate)
 		return;
 
 	for (int client = 1; client <= MaxClients; client++)
 	{
-		if (!IsClientConnected(client))
-			continue;
-
-		if (!IsClientInGame(client) || IsFakeClient(client))
+		if (!IsClientConnected(client) || !IsClientInGame(client) || IsFakeClient(client))
 			continue;
 
 		OfflinePlayer_TrackOrUpdate(client, "None", true);
-
-		if (g_RestrictClients[client].bVerified)
-			continue;
-
-		Database_UpdateClientRestrictionData(client);
+		Database_FetchClientBan(client);
 	}
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Handle cvar changes
+// Purpose: Cvar change hook
 //----------------------------------------------------------------------------------------------------
 void OnCvarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
@@ -262,7 +254,7 @@ void OnCvarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Disconnect from database on plugin end
+// Purpose: Disconnect DB on unload
 //----------------------------------------------------------------------------------------------------
 public void OnPluginEnd()
 {
@@ -270,26 +262,29 @@ public void OnPluginEnd()
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Reset plugin state and clear client data on map change
+// Purpose: Reset state on map change
 //----------------------------------------------------------------------------------------------------
 public void OnMapStart()
 {
-	g_bCleanedUpTempBans = false;
+	g_bCleanedUpOnMapStart = false;
 	g_iCleanupRetryAttempts = 0;
-
-	Client_ClearAllRestrictionData();
+	Client_ResetAll();
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Track player connection for offline eban system
+// Purpose: Start tracking player and queue DB fetch
 //----------------------------------------------------------------------------------------------------
 public void OnClientPostAdminCheck(int client)
 {
+	if (IsFakeClient(client))
+		return;
+
 	OfflinePlayer_TrackOrUpdate(client, "None", true);
+	Database_FetchClientBan(client);
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Clean up client data and handle offline tracking on disconnect
+// Purpose: Clean up on disconnect
 //----------------------------------------------------------------------------------------------------
 public void OnClientDisconnect(int client)
 {
@@ -298,9 +293,9 @@ public void OnClientDisconnect(int client)
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Clean all client data
+// Purpose: Reset all in-memory restriction data and re-fetch from DB
 //----------------------------------------------------------------------------------------------------
-void Client_ClearAllRestrictionData()
+void Client_ResetAll()
 {
 	for (int i = 1; i <= MaxClients; i++)
 	{
@@ -308,17 +303,22 @@ void Client_ClearAllRestrictionData()
 			continue;
 
 		g_RestrictClients[i].Reset();
+		Database_FetchClientBan(i);
 	}
 }
 
+//====================================================================================================
+// COMMANDS
+//====================================================================================================
+
 //----------------------------------------------------------------------------------------------------
-// Purpose: Handle sm_eban command - restrict client from using EntWatch items
+// Purpose: sm_eban — restrict a connected player
 //----------------------------------------------------------------------------------------------------
 public Action Command_ClientRestrict(int client, int args)
 {
 	if (GetCmdArgs() < 1)
 	{
-		ReplyToCommand(client, "\x04[entWatch] \x01Usage: sm_eban <#userid/name> [duration] [reason]");
+		ReplyToCommand(client, "Usage: sm_eban <#userid/name> [duration] [reason]");
 		return Plugin_Handled;
 	}
 
@@ -333,13 +333,15 @@ public Action Command_ClientRestrict(int client, int args)
 		sArguments[0] = '\0';
 	}
 
-	int target = -1;
-	if ((target = FindTarget(client, sArg, true)) == -1)
+	int target = FindTarget(client, sArg, true);
+	if (target == -1)
 		return Plugin_Handled;
 
 	if (g_RestrictClients[target].bRestricted)
 	{
-		ReplyToCommand(client, "\x04[entWatch] \x01%N is already restricted", target);
+		char sName[MAX_NAME_LENGTH];
+		GetClientName(target, sName, sizeof(sName));
+		ReplyToCommand(client, "%s is already restricted.", sName);
 		return Plugin_Handled;
 	}
 
@@ -357,179 +359,167 @@ public Action Command_ClientRestrict(int client, int args)
 	if (GetCmdArgs() == 1)
 		iDuration = g_iDefaultBanTime;
 
-	char sReason[64];
+	if (iDuration < -1 || (g_iMaxBanTime != 0 && iDuration > g_iMaxBanTime))
+	{
+		ReplyToCommand(client, "Invalid duration. Must be -1 to %d (0=permanent, -1=session).", g_iMaxBanTime);
+		return Plugin_Handled;
+	}
+
 	if (g_bUseReasonMenu && IsValidClient(client))
 	{
 		Menu_ShowBanReasonSelection(client, target, iDuration);
 		return Plugin_Handled;
 	}
-	else
-	{
-		FormatEx(sReason, sizeof(sReason), sArguments[len]);
 
-		if (!sReason[0])
-			sReason = g_sDefaultBanReason;
-
-		TrimString(sReason);
-		StripQuotes(sReason);
-	}
-
-	if (g_iMaxBanTime != 0 && iDuration > g_iMaxBanTime || iDuration < -1)
-	{
-		ReplyToCommand(client, "\x04[entWatch] \x01Invalid duration supplied, value must be between -1 and %d (0 = Perma, -1 = Temporary)", g_iMaxBanTime);
-		return Plugin_Handled;
-	}
+	char sReason[64];
+	FormatEx(sReason, sizeof(sReason), "%s", sArguments[len]);
+	if (!sReason[0])
+		FormatEx(sReason, sizeof(sReason), "%s", g_sDefaultBanReason);
+	TrimString(sReason);
+	StripQuotes(sReason);
 
 	ClientRestrict(client, target, iDuration, sReason);
-
 	return Plugin_Handled;
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Handle sm_eunban command - remove restriction from client
+// Purpose: sm_eunban — remove restriction from a connected player
 //----------------------------------------------------------------------------------------------------
 public Action Command_ClientUnrestrict(int client, int args)
 {
 	if (GetCmdArgs() < 1)
 	{
-		ReplyToCommand(client, "\x04[entWatch] \x01Usage: sm_eunban <#userid/name> [reason]");
+		ReplyToCommand(client, "Usage: sm_eunban <#userid/name> [reason]");
 		return Plugin_Handled;
 	}
 
-	char sArguments[2][128];
-	GetCmdArg(1, sArguments[0], sizeof(sArguments[]));
-	GetCmdArg(2, sArguments[1], sizeof(sArguments[]));
+	char sArg[64], sReason[64];
+	GetCmdArg(1, sArg, sizeof(sArg));
+	GetCmdArg(2, sReason, sizeof(sReason));
 
-	int target;
-	if ((target = FindTarget(client, sArguments[0], true)) == -1)
+	int target = FindTarget(client, sArg, true);
+	if (target == -1)
 		return Plugin_Handled;
 
 	if (!g_RestrictClients[target].bRestricted)
 	{
-		ReplyToCommand(client, "\x04[entWatch] \x01%N is not currently restricted", target);
+		char sName[MAX_NAME_LENGTH];
+		GetClientName(target, sName, sizeof(sName));
+		ReplyToCommand(client, "%s is not currently restricted.", sName);
 		return Plugin_Handled;
 	}
 
-	if (g_bUseReasonMenu)
+	if (g_bUseReasonMenu && IsValidClient(client))
 	{
 		Menu_ShowUnbanReasonSelection(client, target);
 		return Plugin_Handled;
 	}
 
-	char sReason[64];
-	if (GetCmdArgs() >= 2)
-	{
-		FormatEx(sReason, sizeof(sReason), "%s", sArguments[1]);
-		TrimString(sReason);
-		StripQuotes(sReason);
-	}
-
+	TrimString(sReason);
+	StripQuotes(sReason);
 	if (!sReason[0])
 		FormatEx(sReason, sizeof(sReason), "%s", g_sDefaultUnbanReason);
 
 	ClientUnrestrict(client, target, sReason);
-
 	return Plugin_Handled;
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Display list of currently restricted clients
+// Purpose: sm_restrictions — list currently restricted players
 //----------------------------------------------------------------------------------------------------
 public Action Command_DisplayRestrictions(int client, int args)
 {
-	char aBuf[1024];
-	char aBuf2[MAX_NAME_LENGTH];
+	char aBuf[1024], aName[MAX_NAME_LENGTH];
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
-		if (!IsValidClient(i) || IsFakeClient(i))
+		if (!IsValidClient(i) || IsFakeClient(i) || !IsRestrictedClient(i))
 			continue;
 
-		if (!IsRestrictedClient(i))
-			continue;
-
-		GetClientName(i, aBuf2, sizeof(aBuf2));
-		StrCat(aBuf, sizeof(aBuf), aBuf2);
+		GetClientName(i, aName, sizeof(aName));
+		StrCat(aBuf, sizeof(aBuf), aName);
 		StrCat(aBuf, sizeof(aBuf), ", ");
 	}
 
-	if (strlen(aBuf))
+	if (strlen(aBuf) > 2)
 	{
-		aBuf[strlen(aBuf) - 2] = 0;
-		ReplyToCommand(client, "\x04[entWatch] \x01Currently restricted clients: %s", aBuf);
+		aBuf[strlen(aBuf) - 2] = '\0';
+		ReplyToCommand(client, "Currently restricted: %s", aBuf);
 	}
 	else
-		ReplyToCommand(client, "\x04[entWatch] \x01Currently restricted clients: none");
+		ReplyToCommand(client, "No players are currently restricted.");
 
 	return Plugin_Handled;
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Display detailed status information for a specific client
+// Purpose: sm_status — show restriction status for a player
 //----------------------------------------------------------------------------------------------------
 public Action Command_DisplayStatus(int client, int args)
 {
 	int target = client;
-
 	if (args > 0)
 	{
-		char sArguments[1][32];
-		GetCmdArg(1, sArguments[0], sizeof(sArguments[]));
-
-		if ((target = FindTarget(client, sArguments[0], true)) == -1)
+		char sArg[32];
+		GetCmdArg(1, sArg, sizeof(sArg));
+		target = FindTarget(client, sArg, true);
+		if (target == -1)
 			return Plugin_Handled;
 	}
 
 	if (!IsValidClient(target))
 	{
-		ReplyToCommand(client, "\x04[entWatch] \x01Player is not valid anymore");
+		ReplyToCommand(client, "Player is not valid.");
 		return Plugin_Handled;
 	}
 
-	ReplyToCommand(client, "\x04[entWatch] \x01%N has %d total eban%s", target, g_RestrictClients[target].intTotalEbans, g_RestrictClients[target].intTotalEbans == 1 ? "" : "s");
+	char sName[MAX_NAME_LENGTH];
+	GetClientName(target, sName, sizeof(sName));
+
+	int iTotalEbans = g_RestrictClients[target].intTotalEbans;
+	ReplyToCommand(client, "%s has %d total eban%s.", sName, iTotalEbans, iTotalEbans != 1 ? "s" : "");
 
 	if (!g_RestrictClients[target].bRestricted)
 	{
-		ReplyToCommand(client, "\x04[entWatch] \x01%N is not currently restricted", target);
+		ReplyToCommand(client, "%s is not currently restricted.", sName);
 		return Plugin_Handled;
 	}
 
-	ReplyToCommand(client, "\x04[entWatch] \x01%N is currently restricted", target);
-	ReplyToCommand(client, "\x04[entWatch] \x01Reason: %s", g_RestrictClients[target].szReason);
+	ReplyToCommand(client, "%s is currently restricted.", sName);
+	ReplyToCommand(client, "Reason: %s", g_RestrictClients[target].szReason);
 
 	if (!g_bDetailedStatus)
 		return Plugin_Handled;
 
-	ReplyToCommand(client, "\x04[entWatch] \x01Admin: %s (%s)", g_RestrictClients[target].szAdminName, g_RestrictClients[target].szAdminSteamID);
+	ReplyToCommand(client, "Admin: %s (%s)", g_RestrictClients[target].szAdminName, g_RestrictClients[target].szAdminSteamID);
 
-	char sTimeBuff[64];
-	FormatTime(sTimeBuff, sizeof(sTimeBuff), NULL_STRING, g_RestrictClients[target].iTimeStamp);
-	ReplyToCommand(client, "\x04[entWatch] \x01Issued: %s", sTimeBuff);
+	char sIssuedBuf[64];
+	FormatTime(sIssuedBuf, sizeof(sIssuedBuf), NULL_STRING, g_RestrictClients[target].iIssuedAt);
+	ReplyToCommand(client, "Issued: %s", sIssuedBuf);
 
 	switch (g_RestrictClients[target].iDuration)
 	{
 		case -1:
 		{
-			ReplyToCommand(client, "\x04[entWatch] \x01Duration: Temporary (Session)");
-			ReplyToCommand(client, "\x04[entWatch] \x01Expires: End of session");
+			ReplyToCommand(client, "Duration: Temporary (Session)");
+			ReplyToCommand(client, "Expires: End of session");
 		}
 		case 0:
 		{
-			ReplyToCommand(client, "\x04[entWatch] \x01Duration: Permanent");
-			ReplyToCommand(client, "\x04[entWatch] \x01Expires: Never");
+			ReplyToCommand(client, "Duration: Permanent");
+			ReplyToCommand(client, "Expires: Never");
 		}
 		default:
 		{
-			int expireTime = g_RestrictClients[target].iTimeStamp + (g_RestrictClients[target].iDuration * 60);
-			int timeLeft = expireTime - GetTime();
-
-			if (timeLeft > 0)
+			int iTimeLeft = g_RestrictClients[target].iExpiresAt - GetTime();
+			if (iTimeLeft > 0)
 			{
 				char sTimeLeft[64], sExpireBuf[64];
-				FormatTimeLeft(timeLeft, sTimeLeft, sizeof(sTimeLeft));
-				FormatTime(sExpireBuf, sizeof(sExpireBuf), NULL_STRING, expireTime);
-				ReplyToCommand(client, "\x04[entWatch] \x01Duration: %d minutes", g_RestrictClients[target].iDuration);
-				ReplyToCommand(client, "\x04[entWatch] \x01Expires: %s (%s remaining)", sExpireBuf, sTimeLeft);
+				FormatTimeLeft(iTimeLeft, sTimeLeft, sizeof(sTimeLeft));
+				FormatTime(sExpireBuf, sizeof(sExpireBuf), NULL_STRING, g_RestrictClients[target].iExpiresAt);
+
+				ReplyToCommand(client, "Duration: %d minutes", g_RestrictClients[target].iDuration);
+				ReplyToCommand(client, "Expires: %s (%s remaining)", sExpireBuf, sTimeLeft);
 			}
 		}
 	}
@@ -538,47 +528,697 @@ public Action Command_DisplayStatus(int client, int args)
 }
 
 //----------------------------------------------------------------------------------------------------
-// Purpose: Check if client can interact with EntWatch weapon items
+// Purpose: sm_eoban — ban an offline player
 //----------------------------------------------------------------------------------------------------
+public Action Command_ClientOfflineRestrict(int client, int args)
+{
+	if (IsClientConnected(client) && IsClientInGame(client))
+		Menu_ShowOfflinePlayerList(client);
+
+	return Plugin_Handled;
+}
+
+//====================================================================================================
+// ENTWATCH CORE HOOKS
+//====================================================================================================
+
 public bool EW_OnClientItemWeaponCanInteract(int iClient, CItem hItem)
 {
 	return !IsRestrictedClient(iClient);
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Check if client can interact with EntWatch button items
-//----------------------------------------------------------------------------------------------------
-public bool EW_OnClientItemButtonCanInteract(int iClient, CItemButton hItemButton)
+public bool EW_OnClientItemButtonCanInteract(int iClient, CItemButton hItem)
 {
 	return !IsRestrictedClient(iClient);
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Check if client can interact with EntWatch trigger items
-//----------------------------------------------------------------------------------------------------
-public bool EW_OnClientItemTriggerCanInteract(int iClient, CItemTrigger hItemTrigger)
+public bool EW_OnClientItemTriggerCanInteract(int iClient, CItemTrigger hItem)
 {
 	return !IsRestrictedClient(iClient);
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: szReason menus
-//----------------------------------------------------------------------------------------------------
-void Menu_ShowBanReasonSelection(int admin, int target, int length)
+public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iType)
+{
+	if (iType != EW_WEAPON_INTERACTION_PICKUP || IsFakeClient(iClient) || hItem.hConfig == null)
+		return;
+
+	char sItemName[32];
+	hItem.hConfig.GetName(sItemName, sizeof(sItemName));
+	OfflinePlayer_TrackOrUpdate(iClient, sItemName, false);
+}
+
+//====================================================================================================
+// CORE RESTRICT / UNRESTRICT
+//====================================================================================================
+
+stock bool ClientRestrict(int admin, int target, int iDuration, const char[] reason)
+{
+	if (!IsValidClient(target) || IsRestrictedClient(target))
+		return false;
+
+	if (!ValidateBanPermissions(admin, iDuration, false))
+		return false;
+
+	char sReason[64];
+	FormatEx(sReason, sizeof(sReason), "%s", reason[0] ? reason : g_sDefaultBanReason);
+
+	int iNow     = GetTime();
+	int iExpires = (iDuration > 0) ? (iNow + iDuration * 60) : 0;
+
+	g_RestrictClients[target].bVerified    = true;
+	g_RestrictClients[target].bRestricted  = true;
+	g_RestrictClients[target].intTotalEbans++;
+	g_RestrictClients[target].iIssuedAt    = iNow;
+	g_RestrictClients[target].iExpiresAt   = iExpires;
+	g_RestrictClients[target].iDuration    = iDuration;
+	strcopy(g_RestrictClients[target].szReason, sizeof(g_RestrictClients[target].szReason), sReason);
+
+	char sAdminName[32], sAdminSteam[64];
+	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sAdminSteam, sizeof(sAdminSteam));
+	strcopy(g_RestrictClients[target].szAdminName,    sizeof(g_RestrictClients[target].szAdminName),    sAdminName);
+	strcopy(g_RestrictClients[target].szAdminSteamID, sizeof(g_RestrictClients[target].szAdminSteamID), sAdminSteam);
+
+	LogBanAction(admin, target, iDuration, sReason, false);
+
+	Call_StartForward(g_hFwd_OnClientRestricted);
+	Call_PushCell(admin);
+	Call_PushCell(target);
+	Call_PushCell(iDuration);
+	Call_PushString(sReason);
+	Call_Finish();
+
+	if (g_bDropItemOnEBan)
+		DropClientItems(target);
+
+	if (iDuration != -1)
+		Database_InsertBan(target, admin, iDuration, iNow, iExpires, sReason);
+
+	return true;
+}
+
+stock bool ClientUnrestrict(int admin, int target, const char[] reason)
+{
+	if (!IsValidClient(target) || !IsRestrictedClient(target))
+		return false;
+
+	char sReason[64];
+	FormatEx(sReason, sizeof(sReason), "%s", reason[0] ? reason : g_sDefaultUnbanReason);
+
+	int iPrevDuration = g_RestrictClients[target].iDuration;
+
+	g_RestrictClients[target].bRestricted       = false;
+	g_RestrictClients[target].iIssuedAt         = 0;
+	g_RestrictClients[target].iExpiresAt        = 0;
+	g_RestrictClients[target].iDuration         = 0;
+	g_RestrictClients[target].szReason[0]       = '\0';
+	g_RestrictClients[target].szAdminName[0]    = '\0';
+	g_RestrictClients[target].szAdminSteamID[0] = '\0';
+
+	LogBanAction(admin, target, 0, sReason, true);
+
+	Call_StartForward(g_hFwd_OnClientUnrestricted);
+	Call_PushCell(admin);
+	Call_PushCell(target);
+	Call_PushString(sReason);
+	Call_Finish();
+
+	if (iPrevDuration != -1)
+		Database_UpdateUnban(target, admin, sReason);
+
+	return true;
+}
+
+stock bool IsRestrictedClient(int client)
+{
+	return IsValidClient(client) && g_RestrictClients[client].bRestricted;
+}
+
+void DropClientItems(int client)
+{
+	if (!IsValidClient(client) || !EW_ClientHasItem(client))
+		return;
+
+	char sClassname[32];
+	for (int slot = 0; slot <= 4; slot++)
+	{
+		if (slot == 2)
+			continue;
+
+		int weapon = GetPlayerWeaponSlot(client, slot);
+		if (weapon < 0 || !IsValidEntity(weapon) || !EW_IsEntityItem(weapon))
+			continue;
+
+		GetEntityClassname(weapon, sClassname, sizeof(sClassname));
+		SDKHooks_DropWeapon(client, weapon, NULL_VECTOR, NULL_VECTOR);
+		GivePlayerItem(client, sClassname);
+	}
+}
+
+//====================================================================================================
+// TIMERS
+//====================================================================================================
+
+public Action Timer_Refresh(Handle timer)
+{
+	if (g_eDBState == EbanDB_Wait)
+	{
+		Database_Connect();
+		return Plugin_Continue;
+	}
+
+	if (g_eDBState != EbanDB_Connected)
+		return Plugin_Continue;
+
+	int iNow = GetTime();
+
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (!IsClientInGame(i) || IsFakeClient(i))
+			continue;
+
+		if (!g_RestrictClients[i].bVerified)
+		{
+			Database_FetchClientBan(i);
+			continue;
+		}
+
+		if (!g_RestrictClients[i].bRestricted)
+			continue;
+
+		if (g_RestrictClients[i].iDuration > 0 && iNow >= g_RestrictClients[i].iExpiresAt)
+			ClientUnrestrict(0, i, "Expired");
+	}
+
+	if (!g_bCleanedUpOnMapStart)
+		Database_CleanupExpiredBans();
+
+	return Plugin_Continue;
+}
+
+public Action Timer_OfflineEban_Cleanup(Handle timer)
+{
+	int iNow = GetTime();
+	for (int i = g_OfflineArray.Length - 1; i >= 0; i--)
+	{
+		OfflinePlayerData p;
+		g_OfflineArray.GetArray(i, p, sizeof(p));
+		if (p.iTrackedUntil != -1 && iNow > p.iTrackedUntil)
+			g_OfflineArray.Erase(i);
+	}
+	return Plugin_Continue;
+}
+
+//====================================================================================================
+// DATABASE
+//====================================================================================================
+
+void Database_Disconnect()
+{
+	delete g_hDB;
+	g_eDBState = EbanDB_Disconnected;
+}
+
+void Database_Connect()
+{
+	if (g_hDB != null && g_eDBState == EbanDB_Connected)
+		return;
+
+	if (g_eDBState == EbanDB_Connecting)
+		return;
+
+	g_eDBState = EbanDB_Connecting;
+	g_iConnectLock = g_iConnectSequence++;
+	Database.Connect(Database_OnConnect, EW_DB_NAME, g_iConnectLock);
+}
+
+public void Database_OnConnect(Database db, const char[] error, any data)
+{
+	if (db == null)
+	{
+		LogError("Connection failed: %s", error);
+		g_eDBState = EbanDB_Wait;
+		CreateTimer(g_fRetryTime, Timer_Reconnect, _, TIMER_FLAG_NO_MAPCHANGE);
+		return;
+	}
+
+	if (data != g_iConnectLock || (g_hDB != null && g_eDBState == EbanDB_Connected))
+	{
+		delete db;
+		return;
+	}
+
+	g_iConnectLock = 0;
+	g_eDBState     = EbanDB_Connected;
+	g_hDB          = db;
+
+	char sDriver[16];
+	g_hDB.Driver.GetIdentifier(sDriver, sizeof(sDriver));
+	g_bIsSQLite = StrEqual(sDriver, "sqlite", false);
+
+	LogMessage("Connected. Driver: %s", sDriver);
+
+	g_hDB.SetCharset(EW_DB_CHARSET);
+	Database_CreateTable();
+}
+
+public Action Timer_Reconnect(Handle timer, any data)
+{
+	g_eDBState = EbanDB_Disconnected;
+	Database_Connect();
+	return Plugin_Continue;
+}
+
+void Database_CreateTable()
+{
+	char sQuery[2048];
+	Transaction tx = new Transaction();
+
+	if (!g_bIsSQLite)
+	{
+		FormatEx(sQuery, sizeof(sQuery),
+			"CREATE TABLE IF NOT EXISTS `EntWatch_Ebans` ("
+			... "`id`                  INT UNSIGNED NOT NULL AUTO_INCREMENT,"
+			... "`client_name`         VARCHAR(32)  NOT NULL,"
+			... "`client_steamid`      VARCHAR(64)  NOT NULL,"
+			... "`admin_name`          VARCHAR(32)  NOT NULL,"
+			... "`admin_steamid`       VARCHAR(64)  NOT NULL,"
+			... "`duration_minutes`    INT          NOT NULL,"
+			... "`issued_at`           INT          NOT NULL,"
+			... "`expires_at`          INT          NULL,"
+			... "`reason`              VARCHAR(64)  NULL,"
+			... "`unbanned_at`         INT          NULL,"
+			... "`unban_reason`        VARCHAR(64)  NULL,"
+			... "`unban_admin_name`    VARCHAR(32)  NULL,"
+			... "`unban_admin_steamid` VARCHAR(64)  NULL,"
+			... "PRIMARY KEY (`id`),"
+			... "INDEX `idx_client`  (`client_steamid`),"
+			... "INDEX `idx_active`  (`unbanned_at`, `expires_at`),"
+			... "INDEX `idx_expires` (`expires_at`)"
+			... ") CHARACTER SET %s COLLATE %s;",
+			EW_DB_CHARSET, EW_DB_COLLATION);
+		tx.AddQuery(sQuery);
+	}
+	else
+	{
+		FormatEx(sQuery, sizeof(sQuery),
+			"CREATE TABLE IF NOT EXISTS `EntWatch_Ebans` ("
+			... "`id`                  INTEGER PRIMARY KEY AUTOINCREMENT,"
+			... "`client_name`         VARCHAR(32)  NOT NULL,"
+			... "`client_steamid`      VARCHAR(64)  NOT NULL,"
+			... "`admin_name`          VARCHAR(32)  NOT NULL,"
+			... "`admin_steamid`       VARCHAR(64)  NOT NULL,"
+			... "`duration_minutes`    INTEGER      NOT NULL,"
+			... "`issued_at`           INTEGER      NOT NULL,"
+			... "`expires_at`          INTEGER      NULL,"
+			... "`reason`              VARCHAR(64)  NULL,"
+			... "`unbanned_at`         INTEGER      NULL,"
+			... "`unban_reason`        VARCHAR(64)  NULL,"
+			... "`unban_admin_name`    VARCHAR(32)  NULL,"
+			... "`unban_admin_steamid` VARCHAR(64)  NULL"
+			... ");");
+		tx.AddQuery(sQuery);
+
+		FormatEx(sQuery, sizeof(sQuery), "CREATE INDEX IF NOT EXISTS `idx_client`  ON `EntWatch_Ebans` (`client_steamid`);");
+		tx.AddQuery(sQuery);
+		FormatEx(sQuery, sizeof(sQuery), "CREATE INDEX IF NOT EXISTS `idx_active`  ON `EntWatch_Ebans` (`unbanned_at`, `expires_at`);");
+		tx.AddQuery(sQuery);
+		FormatEx(sQuery, sizeof(sQuery), "CREATE INDEX IF NOT EXISTS `idx_expires` ON `EntWatch_Ebans` (`expires_at`);");
+		tx.AddQuery(sQuery);
+	}
+
+	g_hDB.Execute(tx, DB_OnTableCreated, DB_OnError, 0, DBPrio_High);
+}
+
+public void DB_OnTableCreated(Database db, any data, int numQueries, Handle[] results, any[] qd)
+{
+	LogMessage("Table ready.");
+	Client_ResetAll();
+	Database_CleanupExpiredBans();
+}
+
+void Database_FetchClientBan(int client)
+{
+	if (g_eDBState != EbanDB_Connected || IsFakeClient(client))
+		return;
+
+	if (g_bEbanInvalidSteamID && IsInvalidSteamID(client))
+	{
+		ClientRestrict(0, client, -1, "SteamID not verified");
+		return;
+	}
+
+	char sSteam[64], sQuery[1024];
+	GetClientAuthId(client, AuthId_Steam2, sSteam, sizeof(sSteam), true);
+
+	FormatEx(sQuery, sizeof(sQuery),
+		"SELECT `admin_name`, `admin_steamid`, `duration_minutes`, `issued_at`, `expires_at`, `reason`,"
+		... " (SELECT COUNT(*) FROM `EntWatch_Ebans` WHERE `client_steamid` = '%s') AS total_ebans"
+		... " FROM `EntWatch_Ebans`"
+		... " WHERE `client_steamid` = '%s'"
+		... "   AND `unbanned_at` IS NULL"
+		... "   AND (`expires_at` IS NULL OR `expires_at` > %d)"
+		... " ORDER BY `issued_at` DESC LIMIT 1",
+		sSteam, sSteam, GetTime());
+
+	g_hDB.Query(DB_OnFetchClientBan, sQuery, GetClientUserId(client), DBPrio_Normal);
+}
+
+public void DB_OnFetchClientBan(Database db, DBResultSet results, const char[] error, any userid)
+{
+	if (error[0])
+	{
+		LogError("FetchClientBan failed: %s", error);
+		return;
+	}
+
+	int client = GetClientOfUserId(userid);
+	if (!client || !IsClientInGame(client))
+		return;
+
+	g_RestrictClients[client].bVerified = true;
+
+	if (!results.FetchRow())
+	{
+		g_RestrictClients[client].bRestricted       = false;
+		g_RestrictClients[client].szAdminName[0]    = '\0';
+		g_RestrictClients[client].szAdminSteamID[0] = '\0';
+		g_RestrictClients[client].szReason[0]       = '\0';
+		g_RestrictClients[client].iDuration         = 0;
+		g_RestrictClients[client].iIssuedAt         = 0;
+		g_RestrictClients[client].iExpiresAt        = 0;
+		return;
+	}
+
+	char adminName[32], adminSteam[64], reason[64];
+	results.FetchString(0, adminName, sizeof(adminName));
+	results.FetchString(1, adminSteam, sizeof(adminSteam));
+	int iDuration   = results.FetchInt(2);
+	int iIssuedAt   = results.FetchInt(3);
+	int iExpiresAt  = results.IsFieldNull(4) ? 0 : results.FetchInt(4);
+	results.FetchString(5, reason, sizeof(reason));
+	int iTotalEbans = results.FetchInt(6);
+
+	g_RestrictClients[client].bRestricted    = true;
+	g_RestrictClients[client].iDuration      = iDuration;
+	g_RestrictClients[client].iIssuedAt      = iIssuedAt;
+	g_RestrictClients[client].iExpiresAt     = iExpiresAt;
+	g_RestrictClients[client].intTotalEbans  = iTotalEbans;
+	strcopy(g_RestrictClients[client].szAdminName,    sizeof(g_RestrictClients[client].szAdminName),    adminName);
+	strcopy(g_RestrictClients[client].szAdminSteamID, sizeof(g_RestrictClients[client].szAdminSteamID), adminSteam);
+	strcopy(g_RestrictClients[client].szReason,       sizeof(g_RestrictClients[client].szReason),       reason);
+}
+
+void Database_InsertBan(int target, int admin, int iDuration, int iIssuedAt, int iExpiresAt, const char[] reason)
+{
+	if (g_eDBState != EbanDB_Connected)
+		return;
+
+	char sAdminName[32], sAdminSteam[64], sClientName[32], sClientSteam[64];
+	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sAdminSteam, sizeof(sAdminSteam));
+	GetClientName(target, sClientName, sizeof(sClientName));
+	GetClientAuthId(target, AuthId_Steam2, sClientSteam, sizeof(sClientSteam), true);
+
+	char escAdminName[65], escClientName[65], escReason[129];
+	g_hDB.Escape(sAdminName,  escAdminName,  sizeof(escAdminName));
+	g_hDB.Escape(sClientName, escClientName, sizeof(escClientName));
+	g_hDB.Escape(reason,      escReason,     sizeof(escReason));
+
+	char sQuery[1024];
+	if (iExpiresAt > 0)
+	{
+		FormatEx(sQuery, sizeof(sQuery),
+			"INSERT INTO `EntWatch_Ebans` "
+			... "(`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration_minutes`,`issued_at`,`expires_at`,`reason`) "
+			... "VALUES ('%s','%s','%s','%s',%d,%d,%d,'%s')",
+			escClientName, sClientSteam, escAdminName, sAdminSteam, iDuration, iIssuedAt, iExpiresAt, escReason);
+	}
+	else
+	{
+		FormatEx(sQuery, sizeof(sQuery),
+			"INSERT INTO `EntWatch_Ebans` "
+			... "(`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration_minutes`,`issued_at`,`expires_at`,`reason`) "
+			... "VALUES ('%s','%s','%s','%s',%d,%d,NULL,'%s')",
+			escClientName, sClientSteam, escAdminName, sAdminSteam, iDuration, iIssuedAt, escReason);
+	}
+
+	g_hDB.Query(DB_OnGenericError, sQuery, 0, DBPrio_Normal);
+}
+
+void Database_UpdateUnban(int target, int admin, const char[] reason)
+{
+	if (g_eDBState != EbanDB_Connected)
+		return;
+
+	char sAdminName[32], sAdminSteam[64], sClientSteam[64];
+	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sAdminSteam, sizeof(sAdminSteam));
+	GetClientAuthId(target, AuthId_Steam2, sClientSteam, sizeof(sClientSteam), true);
+
+	char escAdminName[65], escReason[129];
+	g_hDB.Escape(sAdminName, escAdminName, sizeof(escAdminName));
+	g_hDB.Escape(reason,     escReason,    sizeof(escReason));
+
+	char sQuery[512];
+	FormatEx(sQuery, sizeof(sQuery),
+		"UPDATE `EntWatch_Ebans`"
+		... " SET `unbanned_at`=%d, `unban_reason`='%s', `unban_admin_name`='%s', `unban_admin_steamid`='%s'"
+		... " WHERE `client_steamid`='%s' AND `unbanned_at` IS NULL"
+		... " ORDER BY `issued_at` DESC LIMIT 1",
+		GetTime(), escReason, escAdminName, sAdminSteam, sClientSteam);
+
+	g_hDB.Query(DB_OnGenericError, sQuery, 0, DBPrio_Normal);
+}
+
+void Database_CleanupExpiredBans()
+{
+	if (g_eDBState != EbanDB_Connected)
+		return;
+
+	g_bCleanedUpOnMapStart = true;
+
+	int  iNow = GetTime();
+	char sQuery[512];
+
+	FormatEx(sQuery, sizeof(sQuery),
+		"UPDATE `EntWatch_Ebans`"
+		... " SET `unbanned_at`=%d, `unban_reason`='Expired', `unban_admin_name`='%s', `unban_admin_steamid`='%s'"
+		... " WHERE `unbanned_at` IS NULL"
+		... "   AND ("
+		...     "(`duration_minutes` = -1 AND `issued_at` + %d < %d)"
+		...     " OR "
+		...     "(`expires_at` IS NOT NULL AND `expires_at` < %d)"
+		...   ")",
+		iNow, EW_CONSOLE_NAME, EW_SERVER_STEAMID,
+		EW_SESSION_BAN_TIMEOUT, iNow,
+		iNow);
+
+	g_hDB.Query(DB_OnCleanupResult, sQuery, 0, DBPrio_Low);
+}
+
+public void DB_OnCleanupResult(Database db, DBResultSet results, const char[] error, any data)
+{
+	if (!error[0])
+		return;
+
+	LogError("Cleanup query failed: %s", error);
+
+	g_bCleanedUpOnMapStart = false;
+	g_iCleanupRetryAttempts++;
+
+	if (g_iCleanupRetryAttempts >= 3)
+	{
+		LogError("Cleanup failed 3 times. Giving up until next map.");
+		g_iCleanupRetryAttempts = 0;
+		g_bCleanedUpOnMapStart  = true;
+		return;
+	}
+
+	CreateTimer(10.0, Timer_RetryCleanup, _, TIMER_FLAG_NO_MAPCHANGE);
+}
+
+public Action Timer_RetryCleanup(Handle timer)
+{
+	Database_CleanupExpiredBans();
+	return Plugin_Stop;
+}
+
+public void DB_OnSuccess(Database db, any data, int numQueries, Handle[] results, any[] qd)
+{
+	// Do nothing yet
+}
+
+public void DB_OnError(Database db, any data, int numQueries, const char[] error, int failIndex, any[] qd)
+{
+	LogError("Transaction failed at query %d: %s", failIndex, error);
+}
+
+public void DB_OnGenericError(Database db, DBResultSet results, const char[] error, any data)
+{
+	if (error[0])
+		LogError("Query failed: %s", error);
+}
+
+//====================================================================================================
+// OFFLINE BAN SYSTEM
+//====================================================================================================
+
+void OfflinePlayer_TrackOrUpdate(int client, const char[] itemName, bool bIsConnecting)
+{
+	if (IsFakeClient(client))
+		return;
+
+	char sName[32], sSteam[64];
+	GetClientName(client, sName, sizeof(sName));
+	GetClientAuthId(client, AuthId_Steam2, sSteam, sizeof(sSteam), true);
+
+	for (int i = 0; i < g_OfflineArray.Length; i++)
+	{
+		OfflinePlayerData p;
+		g_OfflineArray.GetArray(i, p, sizeof(p));
+		if (!StrEqual(p.szPlayerSteamID, sSteam))
+			continue;
+
+		p.iUserID = GetClientUserId(client);
+		strcopy(p.szPlayerName, sizeof(p.szPlayerName), sName);
+		strcopy(p.szLastItem,   sizeof(p.szLastItem),   itemName);
+		if (bIsConnecting)
+		{
+			p.iTrackedUntil   = -1;
+			p.iDisconnectedAt = -1;
+		}
+		g_OfflineArray.SetArray(i, p, sizeof(p));
+		return;
+	}
+
+	OfflinePlayerData newP;
+	newP.iUserID         = GetClientUserId(client);
+	newP.iTrackedUntil   = -1;
+	newP.iDisconnectedAt = -1;
+	strcopy(newP.szPlayerName,    sizeof(newP.szPlayerName),    sName);
+	strcopy(newP.szPlayerSteamID, sizeof(newP.szPlayerSteamID), sSteam);
+	strcopy(newP.szLastItem,      sizeof(newP.szLastItem),      itemName);
+	g_OfflineArray.PushArray(newP, sizeof(newP));
+}
+
+void OfflinePlayer_OnClientDisconnect(int client)
+{
+	if (!IsValidClient(client) || IsFakeClient(client))
+		return;
+
+	char sName[32], sSteam[64];
+	GetClientName(client, sName, sizeof(sName));
+	GetClientAuthId(client, AuthId_Steam2, sSteam, sizeof(sSteam), true);
+
+	int iNow = GetTime();
+
+	for (int i = 0; i < g_OfflineArray.Length; i++)
+	{
+		OfflinePlayerData p;
+		g_OfflineArray.GetArray(i, p, sizeof(p));
+		if (!StrEqual(p.szPlayerSteamID, sSteam))
+			continue;
+
+		strcopy(p.szPlayerName, sizeof(p.szPlayerName), sName);
+		p.iDisconnectedAt = iNow;
+		p.iTrackedUntil   = iNow + g_iOfflineTimeClear * 60;
+		g_OfflineArray.SetArray(i, p, sizeof(p));
+		return;
+	}
+
+	OfflinePlayerData newP;
+	newP.iUserID         = GetClientUserId(client);
+	newP.iDisconnectedAt = iNow;
+	newP.iTrackedUntil   = iNow + g_iOfflineTimeClear * 60;
+	strcopy(newP.szPlayerName,    sizeof(newP.szPlayerName),    sName);
+	strcopy(newP.szPlayerSteamID, sizeof(newP.szPlayerSteamID), sSteam);
+	strcopy(newP.szLastItem,      sizeof(newP.szLastItem),      "None");
+	g_OfflineArray.PushArray(newP, sizeof(newP));
+}
+
+void OfflinePlayer_BanClient(OfflinePlayerData player, int admin, int iDuration, const char[] reason)
+{
+	if (g_eDBState != EbanDB_Connected)
+	{
+		ReplyToCommand(admin, "Database is not connected.");
+		return;
+	}
+
+	if (!ValidateBanPermissions(admin, iDuration, true))
+		return;
+
+	char sAdminName[32], sAdminSteam[64];
+	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sAdminSteam, sizeof(sAdminSteam));
+
+	char escAdmin[65], escClient[65], escReason[129];
+	g_hDB.Escape(sAdminName,          escAdmin,  sizeof(escAdmin));
+	g_hDB.Escape(player.szPlayerName, escClient, sizeof(escClient));
+	g_hDB.Escape(reason,              escReason, sizeof(escReason));
+
+	int iNow     = GetTime();
+	int iExpires = (iDuration > 0) ? (iNow + iDuration * 60) : 0;
+
+	char sQuery[1024];
+	if (iExpires > 0)
+	{
+		FormatEx(sQuery, sizeof(sQuery),
+			"INSERT INTO `EntWatch_Ebans` "
+			... "(`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration_minutes`,`issued_at`,`expires_at`,`reason`) "
+			... "VALUES ('%s','%s','%s','%s',%d,%d,%d,'%s')",
+			escClient, player.szPlayerSteamID, escAdmin, sAdminSteam, iDuration, iNow, iExpires, escReason);
+	}
+	else
+	{
+		FormatEx(sQuery, sizeof(sQuery),
+			"INSERT INTO `EntWatch_Ebans` "
+			... "(`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration_minutes`,`issued_at`,`expires_at`,`reason`) "
+			... "VALUES ('%s','%s','%s','%s',%d,%d,NULL,'%s')",
+			escClient, player.szPlayerSteamID, escAdmin, sAdminSteam, iDuration, iNow, escReason);
+	}
+
+	g_hDB.Query(DB_OnGenericError, sQuery, 0, DBPrio_Low);
+
+	Call_StartForward(g_hFwd_OnOfflineRestrictBroadcast);
+	Call_PushCell(admin);
+	Call_PushCell(iDuration);
+	Call_PushString(reason);
+	Call_PushString(sAdminName);
+	Call_PushString(player.szPlayerName);
+	Call_PushString(player.szPlayerSteamID);
+	Call_Finish();
+
+	if (iDuration == 0)
+	{
+		LogAction(admin, -1, "\"%L\" offline restricted \"%s\" (%s) permanently. Reason: %s",
+			admin, player.szPlayerName, player.szPlayerSteamID, reason);
+	}
+	else
+	{
+		LogAction(admin, -1, "\"%L\" offline restricted \"%s\" (%s) for %d minutes. Reason: %s",
+			admin, player.szPlayerName, player.szPlayerSteamID, iDuration, reason);
+	}
+}
+
+//====================================================================================================
+// MENUS
+//====================================================================================================
+
+void Menu_ShowBanReasonSelection(int admin, int target, int iDuration)
 {
 	Menu hMenu = new Menu(MenuHandler_BanReasonSelection);
-	char sTitle[128];
-	if (length == -1)
-		FormatEx(sTitle, sizeof(sTitle), "EBan szReason for %N [Temporary]", target);
-	else if (length == 0)
-		FormatEx(sTitle, sizeof(sTitle), "EBan szReason for %N [Permanently]", target);
+
+	char sName[MAX_NAME_LENGTH], sTitle[128];
+	GetClientName(target, sName, sizeof(sName));
+
+	if (iDuration == -1)
+		FormatEx(sTitle, sizeof(sTitle), "Restrict %s (Session)", sName);
+	else if (iDuration == 0)
+		FormatEx(sTitle, sizeof(sTitle), "Restrict %s (Permanent)", sName);
 	else
-		FormatEx(sTitle, sizeof(sTitle), "EBan szReason for %N [%d Minutes]", target, length);
+		FormatEx(sTitle, sizeof(sTitle), "Restrict %s (%d min)", sName, iDuration);
+
 	hMenu.SetTitle(sTitle);
 
-	int targetUserId = GetClientUserId(target);
-
-	static const char sReasons[][64] = {
+	static const char sReasonKeys[][64] =
+	{
 		"Item misuse",
 		"Trolling on purpose",
 		"Throwing item away",
@@ -590,10 +1230,12 @@ void Menu_ShowBanReasonSelection(int admin, int target, int length)
 	};
 
 	char sIndex[96];
-	for (int i = 0; i < sizeof(sReasons); i++)
+	int targetUserId = GetClientUserId(target);
+
+	for (int i = 0; i < sizeof(sReasonKeys); i++)
 	{
-		FormatEx(sIndex, sizeof(sIndex), "%d/%d/%s", length, targetUserId, sReasons[i]);
-		hMenu.AddItem(sIndex, sReasons[i]);
+		FormatEx(sIndex, sizeof(sIndex), "%d/%d/%s", iDuration, targetUserId, sReasonKeys[i]);
+		hMenu.AddItem(sIndex, sReasonKeys[i]);
 	}
 
 	hMenu.Display(admin, MENU_TIME_FOREVER);
@@ -607,35 +1249,33 @@ public int MenuHandler_BanReasonSelection(Menu hMenu, MenuAction hAction, int pa
 			delete hMenu;
 		case MenuAction_Select:
 		{
-			char selected[96], parts[3][96], reason[64];
+			char selected[96], parts[3][96];
 			hMenu.GetItem(param2, selected, sizeof(selected));
 			ExplodeString(selected, "/", parts, 3, 96);
-			int length = StringToInt(parts[0]);
-			int target = GetClientOfUserId(StringToInt(parts[1]));
-			FormatEx(reason, sizeof(reason), "%s", parts[2]);
+
+			int iDuration = StringToInt(parts[0]);
+			int target    = GetClientOfUserId(StringToInt(parts[1]));
 
 			if (IsValidClient(target))
-				ClientRestrict(param1, target, length, reason);
+				ClientRestrict(param1, target, iDuration, parts[2]);
 			else
-				PrintToChat(param1, "\x04[entWatch] \x01Player is not valid anymore.");
+				ReplyToCommand(param1, "Player is no longer valid.");
 		}
 	}
 	return 0;
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Display unban reason selection menu for admin
-//----------------------------------------------------------------------------------------------------
 void Menu_ShowUnbanReasonSelection(int admin, int target)
 {
 	Menu hMenu = new Menu(MenuHandler_UnbanReasonSelection);
-	char sTitle[128];
-	FormatEx(sTitle, sizeof(sTitle), "EUnBan szReason for %N", target);
+
+	char sName[MAX_NAME_LENGTH], sTitle[128];
+	GetClientName(target, sName, sizeof(sName));
+	FormatEx(sTitle, sizeof(sTitle), "Unrestrict %s", sName);
 	hMenu.SetTitle(sTitle);
 
-	int targetUserId = GetClientUserId(target);
-
-	static const char sUnbanReasons[][64] = {
+	static const char sReasonKeys[][64] =
+	{
 		"Wrong target",
 		"Giving another chance",
 		"Bad duration",
@@ -644,10 +1284,12 @@ void Menu_ShowUnbanReasonSelection(int admin, int target)
 	};
 
 	char sIndex[96];
-	for (int i = 0; i < sizeof(sUnbanReasons); i++)
+	int targetUserId = GetClientUserId(target);
+
+	for (int i = 0; i < sizeof(sReasonKeys); i++)
 	{
-		FormatEx(sIndex, sizeof(sIndex), "%d/%s", targetUserId, sUnbanReasons[i]);
-		hMenu.AddItem(sIndex, sUnbanReasons[i]);
+		FormatEx(sIndex, sizeof(sIndex), "%d/%s", targetUserId, sReasonKeys[i]);
+		hMenu.AddItem(sIndex, sReasonKeys[i]);
 	}
 
 	hMenu.Display(admin, MENU_TIME_FOREVER);
@@ -661,1105 +1303,50 @@ public int MenuHandler_UnbanReasonSelection(Menu hMenu, MenuAction hAction, int 
 			delete hMenu;
 		case MenuAction_Select:
 		{
-			char selected[96], parts[2][96], reason[64];
+			char selected[96], parts[2][96];
 			hMenu.GetItem(param2, selected, sizeof(selected));
 			ExplodeString(selected, "/", parts, 2, 96);
-			int target = GetClientOfUserId(StringToInt(parts[0]));
-			FormatEx(reason, sizeof(reason), "%s", parts[1]);
 
+			int target = GetClientOfUserId(StringToInt(parts[0]));
 			if (IsValidClient(target))
-				ClientUnrestrict(param1, target, reason);
+				ClientUnrestrict(param1, target, parts[1]);
 			else
-				PrintToChat(param1, "\x04[entWatch] \x01Player is not valid anymore.");
+				ReplyToCommand(param1, "Player is no longer valid.");
 		}
 	}
 	return 0;
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Apply restriction to client and prevent EntWatch item access
-//----------------------------------------------------------------------------------------------------
-stock bool ClientRestrict(int client, int target, int iDuration, const char[] reason)
-{
-	if (!IsValidClient(target) || IsRestrictedClient(target))
-		return false;
-
-	if (!ValidateBanPermissions(client, iDuration))
-		return false;
-
-	char sReason[64];
-	if (!reason[0])
-		FormatEx(sReason, sizeof(sReason), "%s", g_sDefaultBanReason);
-	else
-		FormatEx(sReason, sizeof(sReason), "%s", reason);
-
-	// Mark target as Ebanned.
-	g_RestrictClients[target].bVerified = true;
-	g_RestrictClients[target].bRestricted = true;
-	g_RestrictClients[target].intTotalEbans++;
-	g_RestrictClients[target].iTimeStamp = GetTime();
-	g_RestrictClients[target].iDuration = iDuration;
-	strcopy(g_RestrictClients[target].szReason, sizeof(g_RestrictClients[target].szReason), sReason);
-
-	// Store admin info
-	if (client != 0)
-	{
-		FormatEx(g_RestrictClients[target].szAdminName, sizeof(g_RestrictClients[target].szAdminName), "%N", client);
-		GetClientAuthId(client, AuthId_Steam2, g_RestrictClients[target].szAdminSteamID, sizeof(g_RestrictClients[target].szAdminSteamID), true);
-	}
-	else
-	{
-		FormatEx(g_RestrictClients[target].szAdminName, sizeof(g_RestrictClients[target].szAdminName), EW_CONSOLE_NAME);
-		FormatEx(g_RestrictClients[target].szAdminSteamID, sizeof(g_RestrictClients[target].szAdminSteamID), EW_SERVER_STEAMID);
-	}
-
-	LogBanAction(client, target, iDuration, sReason);
-
-	Call_StartForward(g_hFwd_OnClientRestricted);
-	Call_PushCell(client);
-	Call_PushCell(target);
-	Call_PushCell(iDuration);
-	Call_PushString(sReason);
-	Call_Finish();
-
-	if (g_bDropItemOnEBan)
-		DropClientItems(target);
-
-	Database_BanClient(target, client, iDuration, sReason);
-
-	return true;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Drop all special items from a client
-//----------------------------------------------------------------------------------------------------
-void DropClientItems(int client)
-{
-	if (!IsValidClient(client))
-		return;
-
-	if (!EW_ClientHasItem(client))
-		return;
-
-	char sClassname[32];
-	for (int slot = 0; slot <= 4; slot++)
-	{
-		if (slot == 2)
-			continue;
-
-		int WeaponInSlot = GetPlayerWeaponSlot(client, slot);
-		if (WeaponInSlot < 0 || !IsValidEntity(WeaponInSlot))
-			continue;
-
-		// Skip if not a special EntWatch item
-		if (!EW_IsEntityItem(WeaponInSlot))
-			continue;
-
-		GetEntityClassname(WeaponInSlot, sClassname, sizeof(sClassname));
-
-		// Drop the weapon and give the same weapon type back to maintain game balance
-		SDKHooks_DropWeapon(client, WeaponInSlot, NULL_VECTOR, NULL_VECTOR);
-		GivePlayerItem(client, sClassname);
-	}
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Remove restriction from client and restore EntWatch item access
-//----------------------------------------------------------------------------------------------------
-stock bool ClientUnrestrict(int client, int target, const char[] reason)
-{
-	if (!IsValidClient(target) || !IsRestrictedClient(target))
-		return false;
-
-	char sReason[64];
-	if (!reason[0])
-		FormatEx(sReason, sizeof(sReason), "%s", g_sDefaultUnbanReason);
-	else
-		FormatEx(sReason, sizeof(sReason), "%s", reason);
-
-	g_RestrictClients[target].bRestricted = false;
-	g_RestrictClients[target].iTimeStamp = 0;
-	g_RestrictClients[target].iDuration = 0;
-	g_RestrictClients[target].szReason[0] = '\0';
-
-	LogBanAction(client, target, 0, sReason, false, true);
-
-	Call_StartForward(g_hFwd_OnClientUnrestricted);
-	Call_PushCell(client);
-	Call_PushCell(target);
-	Call_PushString(sReason);
-	Call_Finish();
-
-	Database_UnbanClient(target, client, sReason);
-	return true;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Check if client is currently restricted from using EntWatch items
-//----------------------------------------------------------------------------------------------------
-stock bool IsRestrictedClient(int client)
-{
-	if (!IsValidClient(client))
-		return false;
-
-	return g_RestrictClients[client].bRestricted;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Disconnect from database and reset connection state
-//----------------------------------------------------------------------------------------------------
-void Database_Disconnect()
-{
-	if (g_hRestrictDB != null)
-	{
-		delete g_hRestrictDB;
-		g_hRestrictDB = null;
-	}
-	g_eRestrictDBState = EbanDB_Disconnected;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Establish database connection with retry mechanism
-//----------------------------------------------------------------------------------------------------
-void Database_Connect()
-{
-	if (g_hRestrictDB != null && g_eRestrictDBState == EbanDB_Connected)
-		return;
-
-	if (g_eRestrictDBState == EbanDB_Connecting)
-		return;
-
-	g_eRestrictDBState = EbanDB_Connecting;
-	g_iRestrictConnectLock = g_iRestrictSequence++;
-	Database.Connect(Database_OnConnectionSuccess, EW_DB_NAME, g_iRestrictConnectLock);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle successful database connection and setup tables
-//----------------------------------------------------------------------------------------------------
-public void Database_OnConnectionSuccess(Database db, const char[] error, any data)
-{
-	if (db == null)
-	{
-		g_eRestrictDBState = EbanDB_Wait;
-		CreateTimer(g_fRestrictRetryTime, Timer_Restrict_Reconnect, _, TIMER_FLAG_NO_MAPCHANGE);
-		return;
-	}
-
-	if (data != g_iRestrictConnectLock || (g_hRestrictDB != null && g_eRestrictDBState == EbanDB_Connected))
-	{
-		if (db)
-			delete db;
-		return;
-	}
-
-	g_iRestrictConnectLock = 0;
-	g_eRestrictDBState = EbanDB_Connected;
-	g_hRestrictDB = db;
-
-	char sDriver[16];
-	g_hRestrictDB.Driver.GetIdentifier(sDriver, sizeof(sDriver));
-	g_bIsSQLite = StrEqual(sDriver, "sqlite", false);
-
-	LogMessage("[EW-Restrictions]: Connected to database. Driver: %s", sDriver);
-
-	Database_CreateTables();
-	g_hRestrictDB.SetCharset(EW_DB_CHARSET);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Timer callback to retry database connection on failure
-//----------------------------------------------------------------------------------------------------
-public Action Timer_Restrict_Reconnect(Handle timer, any data)
-{
-	g_eRestrictDBState = EbanDB_Disconnected;
-	Database_Connect();
-	return Plugin_Continue;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Create database tables for storing ban information
-//----------------------------------------------------------------------------------------------------
-void Database_CreateTables()
-{
-	if (!g_bIsSQLite)
-	{
-		Transaction createTablesTransaction = new Transaction();
-		char q[2048];
-		FormatEx(q, sizeof(q),
-			"CREATE TABLE IF NOT EXISTS `EntWatch_Current_Eban`("
-			... "`id` int(10) unsigned NOT NULL auto_increment,"
-			... "`client_name` varchar(32) NOT NULL,"
-			... "`client_steamid` varchar(64) NOT NULL,"
-			... "`admin_name` varchar(32) NOT NULL,"
-			... "`admin_steamid` varchar(64) NOT NULL,"
-			... "`duration` int NOT NULL,"
-			... "`timestamp_issued` int NOT NULL,"
-			... "`reason` varchar(64),"
-			... "`reason_unban` varchar(64),"
-			... "`admin_name_unban` varchar(32),"
-			... "`admin_steamid_unban` varchar(64),"
-			... "`timestamp_unban` int,"
-			... "PRIMARY KEY (id),"
-			... "INDEX `idx_steamid_search` (`client_steamid`, `admin_steamid`),"
-			... "INDEX `idx_expiry_sort` (`timestamp_issued`, `duration`))"
-			... "CHARACTER SET %s COLLATE %s;", EW_DB_CHARSET, EW_DB_COLLATION);
-		createTablesTransaction.AddQuery(q);
-
-		FormatEx(q, sizeof(q),
-			"CREATE TABLE IF NOT EXISTS `EntWatch_Old_Eban`("
-			... "`id` int(10) unsigned NOT NULL auto_increment,"
-			... "`client_name` varchar(32) NOT NULL,"
-			... "`client_steamid` varchar(64) NOT NULL,"
-			... "`admin_name` varchar(32) NOT NULL,"
-			... "`admin_steamid` varchar(64) NOT NULL,"
-			... "`duration` int NOT NULL,"
-			... "`timestamp_issued` int NOT NULL,"
-			... "`reason` varchar(64),"
-			... "`reason_unban` varchar(64),"
-			... "`admin_name_unban` varchar(32),"
-			... "`admin_steamid_unban` varchar(64),"
-			... "`timestamp_unban` int,"
-			... "PRIMARY KEY (id),"
-			... "INDEX `idx_steamid_search` (`client_steamid`, `admin_steamid`),"
-			... "INDEX `idx_expiry_sort` (`timestamp_issued`, `duration`))"
-			... "CHARACTER SET %s COLLATE %s;", EW_DB_CHARSET, EW_DB_COLLATION);
-		createTablesTransaction.AddQuery(q);
-
-		g_hRestrictDB.Execute(createTablesTransaction, DatabaseCallback_Success, DatabaseCallback_Error, 0, DBPrio_High);
-	}
-	else
-	{
-		Transaction createTablesTransaction = new Transaction();
-		char q[1024];
-		FormatEx(q, sizeof(q),
-			"CREATE TABLE IF NOT EXISTS `EntWatch_Current_Eban`("
-			... "`id` INTEGER PRIMARY KEY AUTOINCREMENT,"
-			... "`client_name` varchar(32) NOT NULL,"
-			... "`client_steamid` varchar(64) NOT NULL,"
-			... "`admin_name` varchar(32) NOT NULL,"
-			... "`admin_steamid` varchar(64) NOT NULL,"
-			... "`duration` INTEGER NOT NULL,"
-			... "`timestamp_issued` INTEGER NOT NULL,"
-			... "`reason` varchar(64),"
-			... "`reason_unban` varchar(64),"
-			... "`admin_name_unban` varchar(32),"
-			... "`admin_steamid_unban` varchar(64),"
-			... "`timestamp_unban` INTEGER);");
-		createTablesTransaction.AddQuery(q);
-
-		FormatEx(q, sizeof(q), "CREATE INDEX IF NOT EXISTS `idx_steamid_search` ON `EntWatch_Current_Eban` (`client_steamid`, `admin_steamid`);");
-		createTablesTransaction.AddQuery(q);
-
-		FormatEx(q, sizeof(q), "CREATE INDEX IF NOT EXISTS `idx_expiry_sort` ON `EntWatch_Current_Eban` (`timestamp_issued`, `duration`);");
-		createTablesTransaction.AddQuery(q);
-
-		FormatEx(q, sizeof(q),
-			"CREATE TABLE IF NOT EXISTS `EntWatch_Old_Eban`("
-			... "`id` INTEGER PRIMARY KEY AUTOINCREMENT,"
-			... "`client_name` varchar(32) NOT NULL,"
-			... "`client_steamid` varchar(64) NOT NULL,"
-			... "`admin_name` varchar(32) NOT NULL,"
-			... "`admin_steamid` varchar(64) NOT NULL,"
-			... "`duration` INTEGER NOT NULL,"
-			... "`timestamp_issued` INTEGER NOT NULL,"
-			... "`reason` varchar(64),"
-			... "`reason_unban` varchar(64),"
-			... "`admin_name_unban` varchar(32),"
-			... "`admin_steamid_unban` varchar(64),"
-			... "`timestamp_unban` INTEGER);");
-		createTablesTransaction.AddQuery(q);
-
-		FormatEx(q, sizeof(q), "CREATE INDEX IF NOT EXISTS `idx_expiry_sort` ON `EntWatch_Old_Eban` (`timestamp_issued`, `duration`);");
-		createTablesTransaction.AddQuery(q);
-
-		g_hRestrictDB.Execute(createTablesTransaction, DatabaseCallback_Success, DatabaseCallback_Error, 0, DBPrio_High);
-	}
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Update client restriction data from database on connection
-//----------------------------------------------------------------------------------------------------
-void Database_UpdateClientRestrictionData(int client)
-{
-	if (g_eRestrictDBState != EbanDB_Connected || IsFakeClient(client))
-		return;
-
-	if (g_bEbanInvalidSteamID && IsInvalidSteamID(client))
-	{
-		ClientRestrict(0, client, -1, "SteamID not verified");
-		return;
-	}
-
-	char sSteam[64];
-	GetClientAuthId(client, AuthId_Steam2, sSteam, sizeof(sSteam), true);
-	char sQuery[2048];
-
-	if (g_bIsSQLite)
-	{
-		// Simplified query for SQLite (no complex subqueries)
-		FormatEx(sQuery, sizeof(sQuery),
-			"SELECT `admin_name`, `admin_steamid`, `duration`, `timestamp_issued`, `reason`, "
-			... "(SELECT COUNT(*) FROM `EntWatch_Current_Eban` WHERE `client_steamid` = '%s') + "
-			... "(SELECT COUNT(*) FROM `EntWatch_Old_Eban` WHERE `client_steamid` = '%s') AS total_ebans "
-			... "FROM `EntWatch_Current_Eban` "
-			... "WHERE `client_steamid` = '%s' "
-			... "ORDER BY `timestamp_issued` DESC LIMIT 1",
-			sSteam, sSteam, sSteam);
-	}
-	else
-	{
-		// Full MySQL query with complex subqueries
-		FormatEx(sQuery, sizeof(sQuery),
-			"SELECT ban_data.`admin_name`, ban_data.`admin_steamid`, ban_data.`duration`, ban_data.`timestamp_issued`, ban_data.`reason`, "
-			... "(SELECT COUNT(*) FROM `EntWatch_Current_Eban` WHERE `client_steamid` = '%s') + "
-			... "(SELECT COUNT(*) FROM `EntWatch_Old_Eban` WHERE `client_steamid` = '%s') AS total_ebans "
-			... "FROM (SELECT * FROM `EntWatch_Current_Eban` "
-			... "WHERE `client_steamid` = '%s' "
-			... "UNION ALL "
-			... "SELECT * FROM `EntWatch_Old_Eban` "
-			... "WHERE `client_steamid` = '%s' AND NOT EXISTS (SELECT 1 FROM `EntWatch_Current_Eban` "
-			... "WHERE `client_steamid` = '%s')) AS ban_data "
-			... "ORDER BY ban_data.`timestamp_issued` DESC LIMIT 1",
-			sSteam, sSteam, sSteam, sSteam, sSteam);
-	}
-
-	g_hRestrictDB.Query(DatabaseCallback_QueryResult, sQuery, GetClientUserId(client), DBPrio_Normal);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle database callback for client restriction data update
-//----------------------------------------------------------------------------------------------------
-void Database_BanClient(int target, int admin, int iDuration, const char[] reason)
-{
-	if (g_eRestrictDBState != EbanDB_Connected)
-		return;
-
-	char sAdminName[64], sAdminSteam[64];
-	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sAdminSteam, sizeof(sAdminSteam));
-
-	char sClientSteam[64], sClientName[64];
-	GetClientAuthId(target, AuthId_Steam2, sClientSteam, sizeof(sClientSteam), true);
-	GetClientName(target, sClientName, sizeof(sClientName));
-
-	char escAdmin[129], escClient[129], escReason[129];
-	g_hRestrictDB.Escape(sAdminName, escAdmin, sizeof(escAdmin));
-	g_hRestrictDB.Escape(sClientName, escClient, sizeof(escClient));
-	g_hRestrictDB.Escape(reason, escReason, sizeof(escReason));
-
-	int tsIssued = GetTime();
-
-	char query[1024];
-	FormatEx(query, sizeof(query),
-		"INSERT INTO `EntWatch_Current_Eban` ("
-		... "`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration`,`timestamp_issued`,`reason`) "
-		... "VALUES ('%s','%s','%s','%s',%d,%d,'%s')",
-		escClient, sClientSteam, escAdmin, sAdminSteam, iDuration, tsIssued, escReason);
-	g_hRestrictDB.Query(DatabaseCallback_GenericQueryResult, query, DBPrio_Normal);
-}
-
-void Database_UnbanClient(int target, int admin, const char[] reason)
-{
-	if (g_eRestrictDBState != EbanDB_Connected)
-		return;
-
-	char sAdminName[64], sAdminSteam[64];
-	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sAdminSteam, sizeof(sAdminSteam));
-
-	char sClientSteam[64];
-	GetClientAuthId(target, AuthId_Steam2, sClientSteam, sizeof(sClientSteam), true);
-
-	char escAdmin[129], escReason[129];
-	g_hRestrictDB.Escape(sAdminName, escAdmin, sizeof(escAdmin));
-	g_hRestrictDB.Escape(reason, escReason, sizeof(escReason));
-
-	Transaction unbanTransaction = new Transaction();
-	char sQuery[2048];
-	FormatEx(sQuery, sizeof(sQuery),
-		"INSERT INTO `EntWatch_Old_Eban` ("
-		... "`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration`,`timestamp_issued`,`reason`,"
-		... "`reason_unban`,`admin_name_unban`,`admin_steamid_unban`,`timestamp_unban`) "
-		... "SELECT `client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration`,`timestamp_issued`,`reason`,"
-		... "'%s','%s','%s',%d "
-		... "FROM `EntWatch_Current_Eban` WHERE `client_steamid`='%s'",
-		escReason, escAdmin, sAdminSteam, GetTime(), sClientSteam);
-	unbanTransaction.AddQuery(sQuery);
-
-	FormatEx(sQuery, sizeof(sQuery), "DELETE FROM `EntWatch_Current_Eban` WHERE `client_steamid`='%s'", sClientSteam);
-	unbanTransaction.AddQuery(sQuery);
-
-	g_hRestrictDB.Execute(unbanTransaction, DatabaseCallback_Success, DatabaseCallback_Error, 0, DBPrio_Normal);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Periodic timer to refresh client restrictions and cleanup expired bans
-//----------------------------------------------------------------------------------------------------
-public Action Timer_Restrict_Refresh(Handle timer, any data)
-{
-	if (g_eRestrictDBState != EbanDB_Connected)
-		return Plugin_Continue;
-
-	int iCurrentTime = GetTime();
-
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		if (!IsClientInGame(i) || IsFakeClient(i))
-			continue;
-
-		if (!g_RestrictClients[i].bVerified)
-		{
-			Database_UpdateClientRestrictionData(i);
-			continue;
-		}
-
-		if (!g_RestrictClients[i].bRestricted)
-			continue;
-
-		if (g_RestrictClients[i].iDuration > 0 && iCurrentTime > g_RestrictClients[i].iTimeStamp + g_RestrictClients[i].iDuration * 60)
-		{
-			ClientUnrestrict(0, i, "Expired");
-			continue;
-		}
-	}
-
-	Database_CleanupExpiredBans();
-
-	return Plugin_Continue;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Clean up expired bans from database
-//----------------------------------------------------------------------------------------------------
-void Database_CleanupExpiredBans()
-{
-	if (g_bCleanedUpTempBans)
-		return;
-
-	g_bCleanedUpTempBans = true;
-
-	if (g_eRestrictDBState != EbanDB_Connected)
-		return;
-
-	int currentTime = GetTime();
-	char sQuery[1024];
-
-	// Find all expired temporary bans (duration > 0) and old session bans (duration = -1, older than timeout)
-	FormatEx(sQuery, sizeof(sQuery),
-		"SELECT `id`, `client_steamid`, `client_name`, `admin_name`, `admin_steamid`, `duration`, `timestamp_issued`, `reason` "
-		... "FROM `EntWatch_Current_Eban` "
-		... "WHERE (`duration` = -1 AND `timestamp_issued` + %d < %d)", EW_SESSION_BAN_TIMEOUT, currentTime);
-	g_hRestrictDB.Query(DatabaseCallback_QueryResult, sQuery, -1, DBPrio_Low);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Retry cleanup operation (hardcoded 3 attempts with 10s delay)
-//----------------------------------------------------------------------------------------------------
-public Action Timer_RetryCleanup(Handle timer)
-{
-	g_iCleanupRetryAttempts++;
-
-	if (g_iCleanupRetryAttempts >= 3)
-	{
-		LogError("[EW-Restrictions] Max cleanup retry attempts (3) reached. Stopping retry attempts.");
-		g_iCleanupRetryAttempts = 0;
-		return Plugin_Stop;
-	}
-
-	LogMessage("[EW-Restrictions] Cleanup operation failed. Retrying in 10.0 seconds (attempt %d/3)", g_iCleanupRetryAttempts);
-
-	Database_CleanupExpiredBans();
-	CreateTimer(10.0, Timer_RetryCleanup, _, TIMER_FLAG_NO_MAPCHANGE);
-
-	return Plugin_Continue;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified database callback handler for success operations (transactions)
-//----------------------------------------------------------------------------------------------------
-public void DatabaseCallback_Success(Database db, any data, int numQueries, Handle[] results, any[] qd)
-{
-	// Generic success callback for transactions - no action needed
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified database callback handler for error operations (transactions)
-//----------------------------------------------------------------------------------------------------
-public void DatabaseCallback_Error(Database db, any data, int numQueries, const char[] error, int failIndex, any[] qd)
-{
-	LogError("[EW-Restrictions] Database transaction failed: %s (Failed at query %d)", error, failIndex);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified database callback handler for individual query results with error handling with no action
-//----------------------------------------------------------------------------------------------------
-public void DatabaseCallback_GenericQueryResult(Database db, DBResultSet results, const char[] error, any data)
-{
-	if (error[0])
-		LogError("[EW-Restrictions] Database query failed: %s", error);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified database callback handler for individual query results with error handling with action
-//----------------------------------------------------------------------------------------------------
-public void DatabaseCallback_QueryResult(Database db, DBResultSet results, const char[] error, any data)
-{
-	switch (data)
-	{
-		case -1:
-		{
-			if (error[0])
-			{
-				LogError("[EW-Restrictions] Database query failed (Database_UpdateClientRestrictionData): %s", error);
-				CreateTimer(10.0, Timer_RetryCleanup, _, TIMER_FLAG_NO_MAPCHANGE);
-				return;
-			}
-
-			HandleExpiredBansCleanup(results);
-		}
-		default:
-		{
-			if (error[0])
-			{
-				LogError("[EW-Restrictions] Database query failed (HandleClientRestrictionUpdate): %s", error);
-				return;
-			}
-
-			HandleClientRestrictionUpdate(results, data);
-		}
-	}
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle client restriction update from database query
-//----------------------------------------------------------------------------------------------------
-void HandleClientRestrictionUpdate(DBResultSet results, any userid)
-{
-	int client = GetClientOfUserId(userid);
-	if (!client || !IsClientInGame(client))
-		return;
-
-	bool bFound = false;
-	char adminName[32], adminSteamID[64], reason[64];
-	int duration = 0, ts = 0, totalEbans = 0;
-
-	int iCurrentTime = GetTime();
-	while (results.FetchRow())
-	{
-		results.FetchString(0, adminName, sizeof(adminName));
-		results.FetchString(1, adminSteamID, sizeof(adminSteamID));
-		duration = results.FetchInt(2);
-		ts = results.FetchInt(3);
-		results.FetchString(4, reason, sizeof(reason));
-		totalEbans = results.FetchInt(5);
-
-		int expireTime = (duration == 0) ? 0 : (ts + (duration * 60));
-		bFound = (duration == 0) || (iCurrentTime < expireTime);
-	}
-
-	// Apply to local state using new structure
-	g_RestrictClients[client].bVerified = true;
-	g_RestrictClients[client].bRestricted = bFound;
-	g_RestrictClients[client].intTotalEbans = totalEbans;
-
-	if (bFound)
-	{
-		strcopy(g_RestrictClients[client].szAdminName, sizeof(g_RestrictClients[client].szAdminName), adminName);
-		strcopy(g_RestrictClients[client].szAdminSteamID, sizeof(g_RestrictClients[client].szAdminSteamID), adminSteamID);
-		g_RestrictClients[client].iTimeStamp = ts;
-		g_RestrictClients[client].iDuration = duration;
-		strcopy(g_RestrictClients[client].szReason, sizeof(g_RestrictClients[client].szReason), reason);
-	}
-	else
-	{
-		g_RestrictClients[client].szAdminName[0] = '\0';
-		g_RestrictClients[client].szAdminSteamID[0] = '\0';
-		g_RestrictClients[client].iTimeStamp = 0;
-		g_RestrictClients[client].iDuration = 0;
-		g_RestrictClients[client].szReason[0] = '\0';
-	}
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle expired bans cleanup from database query
-//----------------------------------------------------------------------------------------------------
-void HandleExpiredBansCleanup(DBResultSet results)
-{
-	Transaction cleanupTransaction = new Transaction();
-
-	while (results.FetchRow())
-	{
-		int banId = results.FetchInt(0);
-		char clientSteam[64], clientName[32], adminName[32], adminSteam[64], reason[64];
-		int duration = results.FetchInt(5);
-		int timestampIssued = results.FetchInt(6);
-
-		results.FetchString(1, clientSteam, sizeof(clientSteam));
-		results.FetchString(2, clientName, sizeof(clientName));
-		results.FetchString(3, adminName, sizeof(adminName));
-		results.FetchString(4, adminSteam, sizeof(adminSteam));
-		results.FetchString(7, reason, sizeof(reason));
-
-		// Move to Old_Eban with "Expired" reason
-		char sQuery[2048];
-		FormatEx(sQuery, sizeof(sQuery),
-			"INSERT INTO `EntWatch_Old_Eban` ("
-			... "`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration`,`timestamp_issued`,`reason`,"
-			... "`reason_unban`,`admin_name_unban`,`admin_steamid_unban`,`timestamp_unban`) "
-			... "VALUES ("
-			... "'%s','%s','%s','%s',%d,%d,'%s','Expired','Console','SERVER',%d)",
-			clientName, clientSteam, adminName, adminSteam, duration, timestampIssued, reason, GetTime());
-		cleanupTransaction.AddQuery(sQuery);
-
-		// Delete from Current_Eban
-		FormatEx(sQuery, sizeof(sQuery), "DELETE FROM `EntWatch_Current_Eban` WHERE `id` = %d", banId);
-		cleanupTransaction.AddQuery(sQuery);
-	}
-
-	if (results.RowCount > 0)
-		g_hRestrictDB.Execute(cleanupTransaction, DatabaseCallback_Success, DatabaseCallback_Error, 0, DBPrio_Low);
-	else
-		delete cleanupTransaction;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified function to validate admin permissions for ban operations
-//----------------------------------------------------------------------------------------------------
-bool ValidateBanPermissions(int admin, int duration, bool isOffline = false)
-{
-	int maxDuration = isOffline ? g_iOfflineTimeLong : g_iAdminBanLong;
-
-	if (duration > maxDuration && !CheckCommandAccess(admin, "sm_eban_long", ADMFLAG_ROOT))
-	{
-		ReplyToCommand(admin, "\x04[entWatch] \x01You don't have permission to ban for %d minutes or longer. Maximum allowed: %d minutes", duration, maxDuration - 1);
-		return false;
-	}
-
-	if (duration == 0 && !CheckCommandAccess(admin, "sm_eban_perm", ADMFLAG_ROOT))
-	{
-		ReplyToCommand(admin, "\x04[entWatch] \x01You don't have permission to ban permanently");
-		return false;
-	}
-
-	return true;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified function to format admin information
-//----------------------------------------------------------------------------------------------------
-void GetAdminInfo(int admin, char[] adminName, int nameSize, char[] adminSteamID, int steamSize)
-{
-	if (admin != 0)
-	{
-		FormatEx(adminName, nameSize, "%N", admin);
-		GetClientAuthId(admin, AuthId_Steam2, adminSteamID, steamSize, true);
-	}
-	else
-	{
-		FormatEx(adminName, nameSize, EW_CONSOLE_NAME);
-		FormatEx(adminSteamID, steamSize, EW_SERVER_STEAMID);
-	}
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Check if client index is valid and connected
-//----------------------------------------------------------------------------------------------------
-stock bool IsValidClient(int client)
-{
-	return ((1 <= client <= MaxClients) && IsClientConnected(client));
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Native function to restrict client from using EntWatch items
-//----------------------------------------------------------------------------------------------------
-public int Native_ClientRestrict(Handle hPlugin, int numParams)
-{
-	int admin = GetNativeCell(1);
-	if (!IsValidClient(admin) || !IsClientConnected(admin))
-		admin = 0;
-
-	int target = GetNativeCell(2);
-	if (!IsValidClient(target))
-	{
-		ThrowNativeError(SP_ERROR_PARAM, "Invalid target");
-		return -1;
-	}
-
-	char sReason[64];
-	GetNativeString(4, sReason, sizeof(sReason));
-	return ClientRestrict(GetNativeCell(1), target, GetNativeCell(3), sReason);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Native function to remove restriction from client
-//----------------------------------------------------------------------------------------------------
-public int Native_ClientUnrestrict(Handle hPlugin, int numParams)
-{
-	int admin = GetNativeCell(1);
-	if (!IsValidClient(admin) || !IsClientConnected(admin))
-		admin = 0;
-
-	int target = GetNativeCell(2);
-	if (!IsValidClient(target))
-	{
-		ThrowNativeError(SP_ERROR_PARAM, "Invalid target");
-		return -1;
-	}
-
-	char sReason[64];
-	GetNativeString(3, sReason, sizeof(sReason));
-	return ClientUnrestrict(GetNativeCell(1), GetNativeCell(2), sReason);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Native function to check if client is currently restricted
-//----------------------------------------------------------------------------------------------------
-public int Native_IsRestrictedClient(Handle hPlugin, int numParams)
-{
-	int client = GetNativeCell(1);
-	if (!IsValidClient(client))
-	{
-		ThrowNativeError(SP_ERROR_PARAM, "Invalid client");
-		return -1;
-	}
-
-	return IsRestrictedClient(client);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Get total ban count for a client
-//----------------------------------------------------------------------------------------------------
-public int Native_GetClientBanCount(Handle hPlugin, int numParams)
-{
-	int client = GetNativeCell(1);
-	if (!IsValidClient(client))
-	{
-		ThrowNativeError(SP_ERROR_PARAM, "Invalid client");
-		return -1;
-	}
-
-	return g_RestrictClients[client].intTotalEbans;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Get detailed ban information for a client
-//----------------------------------------------------------------------------------------------------
-public int Native_GetClientBanInfo(Handle hPlugin, int numParams)
-{
-	int client = GetNativeCell(1);
-	if (!IsValidClient(client))
-	{
-		ThrowNativeError(SP_ERROR_PARAM, "Invalid client");
-		return -1;
-	}
-
-	if (!g_RestrictClients[client].bRestricted)
-		return 0;
-
-	char adminName[32];
-	GetNativeString(2, adminName, sizeof(adminName));
-	if (adminName[0])
-		FormatEx(adminName, sizeof(adminName), "%s", g_RestrictClients[client].szAdminName);
-
-	char adminSteamID[64];
-	GetNativeString(3, adminSteamID, sizeof(adminSteamID));
-	if (adminSteamID[0])
-		FormatEx(adminSteamID, sizeof(adminSteamID), "%s", g_RestrictClients[client].szAdminSteamID);
-
-	char reason[64];
-	GetNativeString(4, reason, sizeof(reason));
-	if (reason[0])
-		FormatEx(reason, sizeof(reason), "%s", g_RestrictClients[client].szReason);
-
-	int duration = GetNativeCell(5);
-	if (duration != -1)
-		duration = g_RestrictClients[client].iDuration;
-
-	int timestampIssued = GetNativeCell(6);
-	if (timestampIssued != -1)
-		timestampIssued = g_RestrictClients[client].iTimeStamp;
-
-	int totalEbans = GetNativeCell(7);
-	if (totalEbans != -1)
-		totalEbans = g_RestrictClients[client].intTotalEbans;
-
-	return 1;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified function to add or update player in offline eban system
-//----------------------------------------------------------------------------------------------------
-void OfflinePlayer_TrackOrUpdate(int client, const char[] itemName, bool bIsConnecting)
-{
-	if (IsFakeClient(client))
-		return;
-
-	char sClientName[32];
-	GetClientName(client, sClientName, sizeof(sClientName));
-	char sSteamID[64];
-	GetClientAuthId(client, AuthId_Steam2, sSteamID, sizeof(sSteamID), true);
-
-	bool bFound = false;
-	for (int i = 0; i < g_OfflineArray.Length; i++)
-	{
-		OfflinePlayerData offlinePlayer;
-		g_OfflineArray.GetArray(i, offlinePlayer, sizeof(offlinePlayer));
-
-		if (strcmp(offlinePlayer.szPlayerSteamID, sSteamID) == 0)
-		{
-			bFound = true;
-			offlinePlayer.iUserID = GetClientUserId(client);
-			FormatEx(offlinePlayer.szPlayerName, sizeof(offlinePlayer.szPlayerName), "%s", sClientName);
-			FormatEx(offlinePlayer.szLastItem, sizeof(offlinePlayer.szLastItem), "%s", itemName);
-
-			if (bIsConnecting)
-			{
-				// Player is connecting/reconnecting - reset timestamps
-				offlinePlayer.iTimeStamp = -1;
-				offlinePlayer.iTimeStampStart = -1;
-			}
-			// If not connecting, keep existing timestamps
-
-			g_OfflineArray.SetArray(i, offlinePlayer, sizeof(offlinePlayer));
-			break;
-		}
-	}
-
-	if (!bFound)
-	{
-		OfflinePlayerData newOfflinePlayer;
-		newOfflinePlayer.iUserID = GetClientUserId(client);
-		FormatEx(newOfflinePlayer.szPlayerName, sizeof(newOfflinePlayer.szPlayerName), "%s", sClientName);
-		FormatEx(newOfflinePlayer.szPlayerSteamID, sizeof(newOfflinePlayer.szPlayerSteamID), "%s", sSteamID);
-		FormatEx(newOfflinePlayer.szLastItem, sizeof(newOfflinePlayer.szLastItem), "%s", itemName);
-
-		newOfflinePlayer.iTimeStamp = -1;
-		newOfflinePlayer.iTimeStampStart = -1;
-
-		g_OfflineArray.PushArray(newOfflinePlayer, sizeof(newOfflinePlayer));
-	}
-}
-
-void OfflinePlayer_OnClientDisconnect(int client)
-{
-	if (!IsValidClient(client) || !IsClientConnected(client) || IsFakeClient(client))
-		return;
-
-	char sClientName[32];
-	GetClientName(client, sClientName, sizeof(sClientName));
-	char sSteamID[64];
-	GetClientAuthId(client, AuthId_Steam2, sSteamID, sizeof(sSteamID), true);
-
-	bool bFound = false;
-	int iCurrentTime = GetTime();
-	for (int i = 0; i < g_OfflineArray.Length; i++)
-	{
-		OfflinePlayerData offlinePlayer;
-		g_OfflineArray.GetArray(i, offlinePlayer, sizeof(offlinePlayer));
-
-		if (strcmp(offlinePlayer.szPlayerSteamID, sSteamID) == 0)
-		{
-			bFound = true;
-			FormatEx(offlinePlayer.szPlayerName, sizeof(offlinePlayer.szPlayerName), "%s", sClientName);
-			offlinePlayer.iTimeStampStart = iCurrentTime;
-			offlinePlayer.iTimeStamp = offlinePlayer.iTimeStampStart + g_iOfflineTimeClear * 60;
-			g_OfflineArray.SetArray(i, offlinePlayer, sizeof(offlinePlayer));
-			break;
-		}
-	}
-
-	if (!bFound)
-	{
-		OfflinePlayerData newOfflinePlayer;
-		newOfflinePlayer.iUserID = GetClientUserId(client);
-		FormatEx(newOfflinePlayer.szPlayerName, sizeof(newOfflinePlayer.szPlayerName), "%s", sClientName);
-		FormatEx(newOfflinePlayer.szPlayerSteamID, sizeof(newOfflinePlayer.szPlayerSteamID), "%s", sSteamID);
-		newOfflinePlayer.iTimeStampStart = iCurrentTime;
-		newOfflinePlayer.iTimeStamp = newOfflinePlayer.iTimeStampStart + g_iOfflineTimeClear * 60;
-		FormatEx(newOfflinePlayer.szLastItem, sizeof(newOfflinePlayer.szLastItem), "None");
-		g_OfflineArray.PushArray(newOfflinePlayer, sizeof(newOfflinePlayer));
-	}
-}
-
-public void EW_OnClientItemWeaponInteract(int iClient, CItem hItem, int iInteractionType)
-{
-	if (iInteractionType != EW_WEAPON_INTERACTION_PICKUP)
-		return;
-
-	if (IsFakeClient(iClient))
-		return;
-
-	if (hItem.hConfig == null)
-		return;
-
-	char sItemName[32];
-	hItem.hConfig.GetName(sItemName, sizeof(sItemName));
-	OfflinePlayer_TrackOrUpdate(iClient, sItemName, false);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Clean up expired offline player records from memory
-//----------------------------------------------------------------------------------------------------
-public Action Timer_OfflineEban_Cleanup(Handle timer)
-{
-	int currentTime = GetTime();
-	for (int i = g_OfflineArray.Length - 1; i >= 0; i--)
-	{
-		OfflinePlayerData offlinePlayer;
-		g_OfflineArray.GetArray(i, offlinePlayer, sizeof(offlinePlayer));
-
-		if (offlinePlayer.iTimeStamp != -1 && currentTime > offlinePlayer.iTimeStamp)
-			g_OfflineArray.Erase(i);
-	}
-
-	return Plugin_Continue;
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Apply ban to offline player and store in database
-//----------------------------------------------------------------------------------------------------
-void OfflinePlayer_BanClient(OfflinePlayerData player, int admin, int duration, const char[] reason)
-{
-	if (g_eRestrictDBState != EbanDB_Connected)
-	{
-		ReplyToCommand(admin, "[EntWatch] Database is not connected, try again later.");
-		return;
-	}
-
-	if (!ValidateBanPermissions(admin, duration, true))
-		return;
-
-	char sAdminName[64], sAdminSteamID[64];
-	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sAdminSteamID, sizeof(sAdminSteamID));
-
-	char sClientName[64], sClientSteamID[64];
-	FormatEx(sClientName, sizeof(sClientName), "%s", player.szPlayerName);
-	FormatEx(sClientSteamID, sizeof(sClientSteamID), "%s", player.szPlayerSteamID);
-
-	char escAdmin[129], escClient[129], escReason[129];
-	g_hRestrictDB.Escape(sAdminName, escAdmin, sizeof(escAdmin));
-	g_hRestrictDB.Escape(sClientName, escClient, sizeof(escClient));
-	g_hRestrictDB.Escape(reason, escReason, sizeof(escReason));
-
-	int tsIssued = GetTime();
-
-	char query[1024];
-	FormatEx(query, sizeof(query),
-		"INSERT INTO `EntWatch_Current_Eban` ("
-		... "`client_name`,`client_steamid`,`admin_name`,`admin_steamid`,`duration`,`timestamp_issued`,`reason`) "
-		... "VALUES ('%s','%s','%s','%s',%d,%d,'%s')",
-		escClient, sClientSteamID, escAdmin, sAdminSteamID, duration, tsIssued, escReason);
-
-	g_hRestrictDB.Query(DatabaseCallback_GenericQueryResult, query, 0, DBPrio_Low);
-
-	LogBanAction(admin, -1, duration, reason, true);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Display menu listing all disconnected players available for offline ban
-//----------------------------------------------------------------------------------------------------
 void Menu_ShowOfflinePlayerList(int client)
 {
 	Menu hMenu = new Menu(MenuHandler_OfflinePlayerList);
-	hMenu.SetTitle("[entWatch] List of Disconnected Players");
+	hMenu.SetTitle("Offline Players");
 	hMenu.ExitButton = true;
 
-	int currentTime = GetTime();
+	int  iNow   = GetTime();
 	bool bFound = false;
 
 	for (int i = 0; i < g_OfflineArray.Length; i++)
 	{
-		OfflinePlayerData offlinePlayer;
-		g_OfflineArray.GetArray(i, offlinePlayer, sizeof(offlinePlayer));
+		OfflinePlayerData p;
+		g_OfflineArray.GetArray(i, p, sizeof(p));
+		if (p.iTrackedUntil == -1)
+			continue;
 
-		if (offlinePlayer.iTimeStamp != -1)
-		{
-			char sIndex[32], sItemName[64];
-			int minutesAgo = (currentTime - offlinePlayer.iTimeStampStart) / 60;
-			FormatEx(sItemName, sizeof(sItemName), "%s (#%i|%i min ago)", offlinePlayer.szPlayerName, offlinePlayer.iUserID, minutesAgo);
-			FormatEx(sIndex, sizeof(sIndex), "%d", offlinePlayer.iUserID);
-			hMenu.AddItem(sIndex, sItemName);
-			bFound = true;
-		}
+		char sIndex[16], sDisplay[64];
+		int minsAgo = (iNow - p.iDisconnectedAt) / 60;
+		FormatEx(sDisplay, sizeof(sDisplay), "%s #%d (%d min ago)", p.szPlayerName, p.iUserID, minsAgo);
+		FormatEx(sIndex, sizeof(sIndex), "%d", p.iUserID);
+		hMenu.AddItem(sIndex, sDisplay);
+		bFound = true;
 	}
 
 	if (!bFound)
-		hMenu.AddItem("", "No disconnected players", ITEMDRAW_DISABLED);
+		hMenu.AddItem("", "No offline players tracked.", ITEMDRAW_DISABLED);
 
 	hMenu.Display(client, MENU_TIME_FOREVER);
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Display detailed information about selected offline player
-//----------------------------------------------------------------------------------------------------
-void Menu_ShowOfflinePlayerDetails(int client)
-{
-	Menu hMenu = new Menu(MenuHandler_OfflinePlayerDetails);
-	hMenu.SetTitle("[entWatch] Offline Player Info: %s", g_aMenuBuffer[client].szPlayerName);
-	hMenu.ExitBackButton = true;
-
-	char text[128];
-	Format(text, sizeof(text), "Player: %s #%i (%s)", g_aMenuBuffer[client].szPlayerName, g_aMenuBuffer[client].iUserID, g_aMenuBuffer[client].szPlayerSteamID);
-	hMenu.AddItem("", text, ITEMDRAW_DISABLED);
-
-	int minutesAgo = (GetTime() - g_aMenuBuffer[client].iTimeStampStart) / 60;
-	Format(text, sizeof(text), "Disconnected: %i minutes ago", minutesAgo);
-	hMenu.AddItem("", text, ITEMDRAW_DISABLED);
-
-	Format(text, sizeof(text), "Last Item: %s", g_aMenuBuffer[client].szLastItem);
-	hMenu.AddItem("", text, ITEMDRAW_DISABLED);
-	hMenu.AddItem("", "EBan this Player");
-
-	hMenu.Display(client, MENU_TIME_FOREVER);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Display duration selection menu for offline player ban
-//----------------------------------------------------------------------------------------------------
-void Menu_ShowOfflinePlayerDuration(int client)
-{
-	Menu hMenu = new Menu(MenuHandler_OfflinePlayerDuration);
-	hMenu.SetTitle("[entWatch] EBan iDuration for %s", g_aMenuBuffer[client].szPlayerName);
-	hMenu.ExitBackButton = true;
-
-	hMenu.AddItem("10",    "10 Minutes");
-	hMenu.AddItem("60",    "1 Hour");
-	hMenu.AddItem("1440",  "1 Day");
-	hMenu.AddItem("10080", "1 Week");
-	hMenu.AddItem("40320", "1 Month");
-	hMenu.AddItem("0",     "Permanently");
-
-	hMenu.Display(client, MENU_TIME_FOREVER);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Display reason selection menu for offline player ban
-//----------------------------------------------------------------------------------------------------
-void Menu_ShowOfflinePlayerReason(int client, int duration)
-{
-	Menu hMenu = new Menu(MenuHandler_OfflinePlayerReason);
-
-	if (duration == 0)
-		hMenu.SetTitle("[entWatch] EBan szReason for %s [Permanent]", g_aMenuBuffer[client].szPlayerName);
-	else
-		hMenu.SetTitle("[entWatch] EBan szReason for %s [%i minutes]", g_aMenuBuffer[client].szPlayerName, duration);
-
-	hMenu.ExitBackButton = true;
-
-	hMenu.AddItem("Item misuse",             "Item misuse");
-	hMenu.AddItem("Trolling on purpose",     "Trolling on purpose");
-	hMenu.AddItem("Throwing item away",      "Throwing item away");
-	hMenu.AddItem("Not using an item",       "Not using an item");
-	hMenu.AddItem("Trimming team",           "Trimming team");
-	hMenu.AddItem("Not listening to leader", "Not listening to leader");
-	hMenu.AddItem("Spamming an item",        "Spamming an item");
-	hMenu.AddItem("Other",                   "Other");
-
-	hMenu.Display(client, MENU_TIME_FOREVER);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle offline player list menu selection and navigation
-//----------------------------------------------------------------------------------------------------
 public int MenuHandler_OfflinePlayerList(Menu menu, MenuAction action, int param1, int param2)
 {
 	switch (action)
@@ -1768,41 +1355,55 @@ public int MenuHandler_OfflinePlayerList(Menu menu, MenuAction action, int param
 			delete menu;
 		case MenuAction_Select:
 		{
-			char sOption[32];
+			char sOption[16];
 			menu.GetItem(param2, sOption, sizeof(sOption));
-			int itemIndex = StringToInt(sOption);
+			int iUserID = StringToInt(sOption);
 
-			bool bFound = false;
 			for (int i = 0; i < g_OfflineArray.Length; i++)
 			{
-				OfflinePlayerData offlinePlayer;
-				g_OfflineArray.GetArray(i, offlinePlayer, sizeof(offlinePlayer));
+				OfflinePlayerData p;
+				g_OfflineArray.GetArray(i, p, sizeof(p));
+				if (p.iUserID != iUserID)
+					continue;
 
-				if (itemIndex == offlinePlayer.iUserID)
-				{
-					bFound = true;
-					g_aMenuBuffer[param1].iUserID = offlinePlayer.iUserID;
-					FormatEx(g_aMenuBuffer[param1].szPlayerName, sizeof(g_aMenuBuffer[param1].szPlayerName), "%s", offlinePlayer.szPlayerName);
-					FormatEx(g_aMenuBuffer[param1].szPlayerSteamID, sizeof(g_aMenuBuffer[param1].szPlayerSteamID), "%s", offlinePlayer.szPlayerSteamID);
-					g_aMenuBuffer[param1].iTimeStamp = offlinePlayer.iTimeStamp;
-					g_aMenuBuffer[param1].iTimeStampStart = offlinePlayer.iTimeStampStart;
-					FormatEx(g_aMenuBuffer[param1].szLastItem, sizeof(g_aMenuBuffer[param1].szLastItem), "%s", offlinePlayer.szLastItem);
-					break;
-				}
-			}
-
-			if (bFound)
+				g_aMenuBuffer[param1] = p;
 				Menu_ShowOfflinePlayerDetails(param1);
-			else
-				PrintToChat(param1, "\x04[entWatch] \x01Player is no longer valid");
+				return 0;
+			}
+			ReplyToCommand(param1, "Player is no longer tracked.");
 		}
 	}
 	return 0;
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle offline player details menu navigation
-//----------------------------------------------------------------------------------------------------
+void Menu_ShowOfflinePlayerDetails(int client)
+{
+	Menu hMenu = new Menu(MenuHandler_OfflinePlayerDetails);
+	hMenu.ExitBackButton = true;
+
+	char sTitle[128], sText[128];
+
+	FormatEx(sTitle, sizeof(sTitle), "Details: %s", g_aMenuBuffer[client].szPlayerName);
+	hMenu.SetTitle(sTitle);
+
+	FormatEx(sText, sizeof(sText), "Name: %s (#%d)", g_aMenuBuffer[client].szPlayerName, g_aMenuBuffer[client].iUserID);
+	hMenu.AddItem("", sText, ITEMDRAW_DISABLED);
+
+	FormatEx(sText, sizeof(sText), "SteamID: %s", g_aMenuBuffer[client].szPlayerSteamID);
+	hMenu.AddItem("", sText, ITEMDRAW_DISABLED);
+
+	int minsAgo = (GetTime() - g_aMenuBuffer[client].iDisconnectedAt) / 60;
+	FormatEx(sText, sizeof(sText), "Disconnected: %d min ago", minsAgo);
+	hMenu.AddItem("", sText, ITEMDRAW_DISABLED);
+
+	FormatEx(sText, sizeof(sText), "Last item: %s", g_aMenuBuffer[client].szLastItem);
+	hMenu.AddItem("", sText, ITEMDRAW_DISABLED);
+
+	hMenu.AddItem("ban", "Restrict this player");
+
+	hMenu.Display(client, MENU_TIME_FOREVER);
+}
+
 public int MenuHandler_OfflinePlayerDetails(Menu menu, MenuAction action, int param1, int param2)
 {
 	switch (action)
@@ -1818,9 +1419,25 @@ public int MenuHandler_OfflinePlayerDetails(Menu menu, MenuAction action, int pa
 	return 0;
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle offline player duration selection and permission validation
-//----------------------------------------------------------------------------------------------------
+void Menu_ShowOfflinePlayerDuration(int client)
+{
+	Menu hMenu = new Menu(MenuHandler_OfflinePlayerDuration);
+	hMenu.ExitBackButton = true;
+
+	char sTitle[128];
+	FormatEx(sTitle, sizeof(sTitle), "Duration for %s", g_aMenuBuffer[client].szPlayerName);
+	hMenu.SetTitle(sTitle);
+
+	hMenu.AddItem("10",    "10 minutes");
+	hMenu.AddItem("60",    "1 hour");
+	hMenu.AddItem("1440",  "1 day");
+	hMenu.AddItem("10080", "1 week");
+	hMenu.AddItem("40320", "1 month");
+	hMenu.AddItem("0",     "Permanent");
+
+	hMenu.Display(client, MENU_TIME_FOREVER);
+}
+
 public int MenuHandler_OfflinePlayerDuration(Menu menu, MenuAction action, int param1, int param2)
 {
 	switch (action)
@@ -1832,20 +1449,50 @@ public int MenuHandler_OfflinePlayerDuration(Menu menu, MenuAction action, int p
 				Menu_ShowOfflinePlayerDetails(param1);
 		case MenuAction_Select:
 		{
-			char sSelected[64];
+			char sSelected[16];
 			menu.GetItem(param2, sSelected, sizeof(sSelected));
-			int duration = StringToInt(sSelected);
-
-			if (ValidateBanPermissions(param1, duration, true))
-				Menu_ShowOfflinePlayerReason(param1, duration);
+			int iDuration = StringToInt(sSelected);
+			if (ValidateBanPermissions(param1, iDuration, true))
+				Menu_ShowOfflinePlayerReason(param1, iDuration);
 		}
 	}
 	return 0;
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle offline player reason selection and apply ban
-//----------------------------------------------------------------------------------------------------
+void Menu_ShowOfflinePlayerReason(int client, int iDuration)
+{
+	Menu hMenu = new Menu(MenuHandler_OfflinePlayerReason);
+	hMenu.ExitBackButton = true;
+
+	char sTitle[128], sIndex[96];
+
+	if (iDuration == 0)
+		FormatEx(sTitle, sizeof(sTitle), "Reason (Permanent) for %s", g_aMenuBuffer[client].szPlayerName);
+	else
+		FormatEx(sTitle, sizeof(sTitle), "Reason (%d min) for %s", iDuration, g_aMenuBuffer[client].szPlayerName);
+	hMenu.SetTitle(sTitle);
+
+	static const char sReasonKeys[][64] =
+	{
+		"Item misuse",
+		"Trolling on purpose",
+		"Throwing item away",
+		"Not using an item",
+		"Trimming team",
+		"Not listening to leader",
+		"Spamming an item",
+		"Other"
+	};
+
+	for (int i = 0; i < sizeof(sReasonKeys); i++)
+	{
+		FormatEx(sIndex, sizeof(sIndex), "%d/%s", iDuration, sReasonKeys[i]);
+		hMenu.AddItem(sIndex, sReasonKeys[i]);
+	}
+
+	hMenu.Display(client, MENU_TIME_FOREVER);
+}
+
 public int MenuHandler_OfflinePlayerReason(Menu menu, MenuAction action, int param1, int param2)
 {
 	switch (action)
@@ -1857,107 +1504,253 @@ public int MenuHandler_OfflinePlayerReason(Menu menu, MenuAction action, int par
 				Menu_ShowOfflinePlayerDuration(param1);
 		case MenuAction_Select:
 		{
-			char sSelected[64], Explode_sParam[2][64], sReason[32];
+			char sSelected[96], parts[2][96];
 			menu.GetItem(param2, sSelected, sizeof(sSelected));
-			ExplodeString(sSelected, "/", Explode_sParam, 2, 64);
-			int iDuration = StringToInt(Explode_sParam[0]);
-			FormatEx(sReason, sizeof(sReason), "%s", Explode_sParam[1]);
-			OfflinePlayer_BanClient(g_aMenuBuffer[param1], param1, iDuration, sReason);
+			ExplodeString(sSelected, "/", parts, 2, 96);
+			int iDuration = StringToInt(parts[0]);
+			OfflinePlayer_BanClient(g_aMenuBuffer[param1], param1, iDuration, parts[1]);
 		}
 	}
 	return 0;
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Handle sm_eoban command - ban offline players
-//----------------------------------------------------------------------------------------------------
-public Action Command_ClientOfflineRestrict(int client, int args)
-{
-	if (IsClientConnected(client) && IsClientInGame(client))
-		Menu_ShowOfflinePlayerList(client);
+//====================================================================================================
+// NATIVES
+//====================================================================================================
 
-	return Plugin_Handled;
+public int Native_ClientRestrict(Handle hPlugin, int numParams)
+{
+	int admin = GetNativeCell(1);
+	if (!IsValidClient(admin))
+		admin = 0;
+
+	int target = GetNativeCell(2);
+	if (!IsValidClient(target))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid target");
+		return -1;
+	}
+
+	char sReason[64];
+	GetNativeString(4, sReason, sizeof(sReason));
+	return ClientRestrict(admin, target, GetNativeCell(3), sReason);
 }
 
-//----------------------------------------------------------------------------------------------------
-// Purpose: Check if client has invalid SteamID
-//----------------------------------------------------------------------------------------------------
+public int Native_ClientUnrestrict(Handle hPlugin, int numParams)
+{
+	int admin = GetNativeCell(1);
+	if (!IsValidClient(admin))
+		admin = 0;
+
+	int target = GetNativeCell(2);
+	if (!IsValidClient(target))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid target");
+		return -1;
+	}
+
+	char sReason[64];
+	GetNativeString(3, sReason, sizeof(sReason));
+	return ClientUnrestrict(admin, target, sReason);
+}
+
+public int Native_IsRestrictedClient(Handle hPlugin, int numParams)
+{
+	int client = GetNativeCell(1);
+	if (!IsValidClient(client))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid client");
+		return -1;
+	}
+	return IsRestrictedClient(client);
+}
+
+public int Native_GetClientBanCount(Handle hPlugin, int numParams)
+{
+	int client = GetNativeCell(1);
+	if (!IsValidClient(client))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid client");
+		return -1;
+	}
+	return g_RestrictClients[client].intTotalEbans;
+}
+
+public int Native_GetClientBanInfo(Handle hPlugin, int numParams)
+{
+	int client = GetNativeCell(1);
+	if (!IsValidClient(client))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid client");
+		return -1;
+	}
+
+	if (!g_RestrictClients[client].bRestricted)
+		return 0;
+
+	SetNativeString(2,  g_RestrictClients[client].szAdminName,    GetNativeCell(3));
+	SetNativeString(4,  g_RestrictClients[client].szAdminSteamID, GetNativeCell(5));
+	SetNativeString(6,  g_RestrictClients[client].szReason,       GetNativeCell(7));
+	SetNativeCellRef(8, g_RestrictClients[client].iDuration);
+	SetNativeCellRef(9, g_RestrictClients[client].iIssuedAt);
+	SetNativeCellRef(10, g_RestrictClients[client].intTotalEbans);
+
+	return 1;
+}
+
+public int Native_ShowBanReasonMenu(Handle hPlugin, int numParams)
+{
+	int admin = GetNativeCell(1);
+	if (!IsValidClient(admin))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid admin (must be a connected client)");
+		return 0;
+	}
+
+	int target = GetNativeCell(2);
+	if (!IsValidClient(target))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid target");
+		return 0;
+	}
+
+	int iDuration = GetNativeCell(3);
+	if (iDuration < -1)
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid duration (must be >= -1)");
+		return 0;
+	}
+
+	if (g_RestrictClients[target].bRestricted)
+		return 0;
+
+	Menu_ShowBanReasonSelection(admin, target, iDuration);
+	return 1;
+}
+
+public int Native_ShowUnbanReasonMenu(Handle hPlugin, int numParams)
+{
+	int admin = GetNativeCell(1);
+	if (!IsValidClient(admin))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid admin (must be a connected client)");
+		return 0;
+	}
+
+	int target = GetNativeCell(2);
+	if (!IsValidClient(target))
+	{
+		ThrowNativeError(SP_ERROR_PARAM, "Invalid target");
+		return 0;
+	}
+
+	if (!g_RestrictClients[target].bRestricted)
+		return 0;
+
+	Menu_ShowUnbanReasonSelection(admin, target);
+	return 1;
+}
+
+//====================================================================================================
+// HELPERS
+//====================================================================================================
+
+bool ValidateBanPermissions(int admin, int iDuration, bool bIsOffline)
+{
+	int iMax = bIsOffline ? g_iOfflineTimeLong : g_iAdminBanLong;
+
+	if (iDuration > iMax && !CheckCommandAccess(admin, "sm_eban_long", ADMFLAG_ROOT))
+	{
+		ReplyToCommand(admin, "You don't have permission to ban for %d+ minutes (max: %d).", iDuration, iMax);
+		return false;
+	}
+
+	if (iDuration == 0 && !CheckCommandAccess(admin, "sm_eban_perm", ADMFLAG_ROOT))
+	{
+		ReplyToCommand(admin, "You don't have permission to ban permanently.");
+		return false;
+	}
+
+	return true;
+}
+
+void GetAdminInfo(int admin, char[] sName, int nameSize, char[] sSteam, int steamSize)
+{
+	if (admin != 0 && IsValidClient(admin))
+	{
+		FormatEx(sName, nameSize, "%N", admin);
+		if (steamSize > 0)
+			GetClientAuthId(admin, AuthId_Steam2, sSteam, steamSize, true);
+	}
+	else
+	{
+		FormatEx(sName,  nameSize,  EW_CONSOLE_NAME);
+		if (steamSize > 0)
+			FormatEx(sSteam, steamSize, EW_SERVER_STEAMID);
+	}
+}
+
+void LogBanAction(int admin, int target, int iDuration, const char[] reason, bool bIsUnban)
+{
+	char sAdminName[MAX_NAME_LENGTH], sTargetName[MAX_NAME_LENGTH];
+	char sDummySteam[1];
+	GetAdminInfo(admin, sAdminName, sizeof(sAdminName), sDummySteam, sizeof(sDummySteam));
+	GetClientName(target, sTargetName, sizeof(sTargetName));
+
+	if (bIsUnban)
+	{
+		LogAction(admin, target, "\"%L\" unrestricted \"%L\". Reason: %s", admin, target, reason);
+
+		Call_StartForward(g_hFwd_OnUnrestrictBroadcast);
+		Call_PushCell(admin);
+		Call_PushCell(target);
+		Call_PushString(reason);
+		Call_PushString(sAdminName);
+		Call_PushString(sTargetName);
+		Call_Finish();
+		return;
+	}
+
+	switch (iDuration)
+	{
+		case -1:
+			LogAction(admin, target, "\"%L\" restricted \"%L\" temporarily. Reason: %s", admin, target, reason);
+		case 0:
+			LogAction(admin, target, "\"%L\" restricted \"%L\" permanently. Reason: %s", admin, target, reason);
+		default:
+			LogAction(admin, target, "\"%L\" restricted \"%L\" for %d minutes. Reason: %s", admin, target, iDuration, reason);
+	}
+
+	Call_StartForward(g_hFwd_OnRestrictBroadcast);
+	Call_PushCell(admin);
+	Call_PushCell(target);
+	Call_PushCell(iDuration);
+	Call_PushString(reason);
+	Call_PushString(sAdminName);
+	Call_PushString(sTargetName);
+	Call_Finish();
+}
+
+stock void FormatTimeLeft(int iSeconds, char[] sBuffer, int maxlen)
+{
+	if (iSeconds < 60)
+		FormatEx(sBuffer, maxlen, "%d second%s", iSeconds, iSeconds != 1 ? "s" : "");
+	else if (iSeconds < 3600)
+		FormatEx(sBuffer, maxlen, "%d min %d sec", iSeconds / 60, iSeconds % 60);
+	else if (iSeconds < 86400)
+		FormatEx(sBuffer, maxlen, "%d hr %d min", iSeconds / 3600, (iSeconds / 60) % 60);
+	else
+		FormatEx(sBuffer, maxlen, "%d day%s %d hr", iSeconds / 86400, (iSeconds / 86400) != 1 ? "s" : "", (iSeconds / 3600) % 24);
+}
+
+stock bool IsValidClient(int client)
+{
+	return (1 <= client <= MaxClients) && IsClientConnected(client);
+}
+
 stock bool IsInvalidSteamID(int client)
 {
 	char sSteam[64];
 	GetClientAuthId(client, AuthId_Steam2, sSteam, sizeof(sSteam), true);
-	return (strncmp(sSteam[6], "ID_", 3) == 0);
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Format remaining time in human readable format
-//----------------------------------------------------------------------------------------------------
-stock void FormatTimeLeft(int lefttime, char[] TimeLeft, int maxlength)
-{
-	if (lefttime > -1)
-	{
-		if (lefttime < 60) // Less than 1 minute
-			FormatEx(TimeLeft, maxlength, "%02i %s", lefttime, "Seconds");
-		else if (lefttime >= 60 && lefttime < 3600) // 1 minute to 1 hour
-			FormatEx(TimeLeft, maxlength, "%i %s %02i %s", lefttime / 60, "Minutes", lefttime % 60, "Seconds");
-		else if (lefttime >= 3600 && lefttime < 86400) // 1 hour to 1 day
-			FormatEx(TimeLeft, maxlength, "%i %s %02i %s", lefttime / 3600, "Hours", (lefttime / 60) % 60, "Minutes");
-		else if (lefttime >= 86400) // 1 day or more
-			FormatEx(TimeLeft, maxlength, "%i %s %02i %s", lefttime / 86400, "Days", (lefttime / 3600) % 24, "Hours");
-	}
-}
-
-//----------------------------------------------------------------------------------------------------
-// Purpose: Unified function to log ban actions (including unbans)
-//----------------------------------------------------------------------------------------------------
-void LogBanAction(int admin, int target, int duration, const char[] reason, bool isOffline = false, bool isUnban = false)
-{
-	char adminName[64];
-	GetAdminInfo(admin, adminName, sizeof(adminName), "", 0);
-
-	if (isUnban)
-	{
-		LogAction(admin, target, "%L unrestricted %L. szReason: %s", admin, target, reason);
-		PrintToChatAll("\x04[entWatch] \x01%N unrestricted %N.", admin, target);
-		PrintToChatAll("\x04[entWatch] \x01Reason: %s", reason);
-		return;
-	}
-
-	if (isOffline)
-	{
-		if (duration == 0)
-		{
-			LogAction(admin, -1, "\"%L\" offline restricted \"%s\" permanently. szReason: %s", admin, adminName, reason);
-			PrintToChatAll("\x04[entWatch] \x01%s \x01offline restricted \x04%s \x01permanently. \x03Reason: \x01%s", adminName, adminName, reason);
-		}
-		else
-		{
-			LogAction(admin, -1, "\"%L\" offline restricted \"%s\" for %d minutes. szReason: %s", admin, adminName, duration, reason);
-			PrintToChatAll("\x04[entWatch] \x01%s \x01offline restricted \x04%s \x01for \x03%d minutes. \x03Reason: \x01%s", adminName, adminName, duration, reason);
-		}
-	}
-	else
-	{
-		switch (duration)
-		{
-			case -1:
-			{
-				LogAction(admin, target, "%L restricted %L temporarily. szReason: %s", admin, target, reason);
-				PrintToChatAll("\x04[entWatch] \x01%N restricted %N temporarily.", admin, target);
-				PrintToChatAll("\x04[entWatch] \x01Reason: %s", reason);
-			}
-			case 0:
-			{
-				LogAction(admin, target, "%L restricted %L permanently. szReason: %s", admin, target, reason);
-				PrintToChatAll("\x04[entWatch] \x01%N restricted %N permanently.", admin, target);
-				PrintToChatAll("\x04[entWatch] \x01Reason: %s", reason);
-			}
-			default:
-			{
-				LogAction(admin, target, "%L restricted %L for %d minutes. szReason: %s", admin, target, duration, reason);
-				PrintToChatAll("\x04[entWatch] \x01%N restricted %N for %d minutes.", admin, target, duration);
-				PrintToChatAll("\x04[entWatch] \x01Reason: %s", reason);
-			}
-		}
-	}
+	return strncmp(sSteam[6], "ID_", 3) == 0;
 }
