@@ -77,6 +77,27 @@ native int EW_GetClientBanCount(int iClient);
 native int EW_GetClientBanInfo(int iClient, char[] sAdminName, char[] sAdminSteamID, char[] sReason, int &iDuration, int &iTimestampIssued, int &iTotalEbans);
 
 /**
+ * Open the ban reason selection menu for an admin
+ * Requires sm_eban_use_reason_menu to be enabled, but works regardless —
+ * callers can use this to force the menu even when the cvar is off.
+ *
+ * @param iAdmin        Admin who will see the menu (must be a connected client)
+ * @param iTarget       Client to restrict
+ * @param iDuration     Duration in minutes (-1=session, 0=permanent, >0=timed)
+ * @return              True if the menu was shown, false if target is already banned or invalid
+ */
+native bool EW_ShowBanReasonMenu(int iAdmin, int iTarget, int iDuration);
+
+/**
+ * Open the unban reason selection menu for an admin
+ *
+ * @param iAdmin        Admin who will see the menu (must be a connected client)
+ * @param iTarget       Client to unrestrict (must currently be restricted)
+ * @return              True if the menu was shown, false if target is not banned or invalid
+ */
+native bool EW_ShowUnbanReasonMenu(int iAdmin, int iTarget);
+
+/**
  * Plugin information
  */
 public SharedPlugin __pl_entWatch_restrictions =
@@ -99,5 +120,7 @@ public SharedPlugin __pl_entWatch_restrictions =
 		MarkNativeAsOptional("EW_IsRestrictedClient");
 		MarkNativeAsOptional("EW_GetClientBanCount");
 		MarkNativeAsOptional("EW_GetClientBanInfo");
+		MarkNativeAsOptional("EW_ShowBanReasonMenu");
+		MarkNativeAsOptional("EW_ShowUnbanReasonMenu");
 	}
 #endif
